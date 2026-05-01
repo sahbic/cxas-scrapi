@@ -21,6 +21,7 @@ import traceback
 from typing import Any, Callable, Dict, List, Optional, Union
 
 from google.cloud.ces_v1beta import types
+from google.protobuf import field_mask_pb2
 
 from cxas_scrapi.core.agents import Agents
 
@@ -139,7 +140,7 @@ class Callbacks(Agents):
         getattr(agent, field_name).append(new_callback)
 
         # Use field mask so we only update the specific callback field
-        mask = types.field_mask_pb2.FieldMask(paths=[field_name])
+        mask = field_mask_pb2.FieldMask(paths=[field_name])
         request = types.UpdateAgentRequest(agent=agent, update_mask=mask)
         return self.client.update_agent(request=request)
 
@@ -174,7 +175,7 @@ class Callbacks(Agents):
         if disabled is not None:
             callbacks[index].disabled = disabled
 
-        mask = types.field_mask_pb2.FieldMask(paths=[field_name])
+        mask = field_mask_pb2.FieldMask(paths=[field_name])
         request = types.UpdateAgentRequest(agent=agent, update_mask=mask)
         return self.client.update_agent(request=request)
 
@@ -197,7 +198,7 @@ class Callbacks(Agents):
         # Remove the specific element
         del callbacks[index]
 
-        mask = types.field_mask_pb2.FieldMask(paths=[field_name])
+        mask = field_mask_pb2.FieldMask(paths=[field_name])
         request = types.UpdateAgentRequest(agent=agent, update_mask=mask)
         return self.client.update_agent(request=request)
 

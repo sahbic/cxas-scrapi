@@ -14,6 +14,8 @@
 
 from unittest.mock import MagicMock, patch
 
+from google.cloud.ces_v1beta import types
+
 from cxas_scrapi.core.callbacks import Callbacks
 
 
@@ -59,24 +61,9 @@ def test_get_callback(mock_client_cls, mock_get_agent):
 
 @patch("cxas_scrapi.core.callbacks.Agents.get_agent")
 @patch("cxas_scrapi.core.agents.AgentServiceClient")
-@patch("cxas_scrapi.core.callbacks.types.Callback")
-def test_create_callback(mock_callback_cls, mock_client_cls, mock_get_agent):
-    def side_effect(**kwargs):
-        m = MagicMock()
-        for k, v in kwargs.items():
-            setattr(m, k, v)
-        return m
-
-    mock_callback_cls.side_effect = side_effect
-
+def test_create_callback(mock_client_cls, mock_get_agent):
     """Test create_callback."""
-    mock_agent = MagicMock()
-
-    class MockRepeatedList(list):
-        pass
-
-    callbacks_list = MockRepeatedList()
-    mock_agent.before_model_callbacks = callbacks_list
+    mock_agent = types.Agent()
     mock_get_agent.return_value = mock_agent
 
     cb_client = Callbacks(app_name="projects/p/locations/l/apps/a")
@@ -86,8 +73,9 @@ def test_create_callback(mock_callback_cls, mock_client_cls, mock_get_agent):
 
     cb_client.create_callback("agent1", "before_model", my_cool_func)
 
-    assert len(callbacks_list) == 1
-    assert "def beforeModelCallback" in callbacks_list[0].python_code
+    assert len(mock_agent.before_model_callbacks) == 1
+    cb_code = mock_agent.before_model_callbacks[0].python_code
+    assert "def beforeModelCallback" in cb_code
     cb_client.client.update_agent.assert_called_once()
 
 
@@ -95,11 +83,9 @@ def test_create_callback(mock_callback_cls, mock_client_cls, mock_get_agent):
 @patch("cxas_scrapi.core.agents.AgentServiceClient")
 def test_update_callback(mock_client_cls, mock_get_agent):
     """Test update_callback."""
-    mock_agent = MagicMock()
-    mock_cb = MagicMock()
-    mock_cb.python_code = "old"
-    mock_cb.description = "old"
-    mock_agent.before_model_callbacks = [mock_cb]
+    mock_agent = types.Agent()
+    cb = types.Callback(python_code="old", description="old")
+    mock_agent.before_model_callbacks.append(cb)
     mock_get_agent.return_value = mock_agent
 
     cb_client = Callbacks(app_name="projects/p/locations/l/apps/a")
@@ -112,8 +98,8 @@ def test_update_callback(mock_client_cls, mock_get_agent):
         description="new_desc",
     )
 
-    assert mock_cb.python_code == "new_code"
-    assert mock_cb.description == "new_desc"
+    assert mock_agent.before_model_callbacks[0].python_code == "new_code"
+    assert mock_agent.before_model_callbacks[0].description == "new_desc"
     cb_client.client.update_agent.assert_called_once()
 
 
@@ -121,23 +107,18 @@ def test_update_callback(mock_client_cls, mock_get_agent):
 @patch("cxas_scrapi.core.agents.AgentServiceClient")
 def test_delete_callback(mock_client_cls, mock_get_agent):
     """Test delete_callback."""
-    mock_agent = MagicMock()
-    mock_cb1 = MagicMock()
-    mock_cb2 = MagicMock()
-
-    class MockRepeatedList(list):
-        pass
-
-    callbacks_list = MockRepeatedList([mock_cb1, mock_cb2])
-    mock_agent.before_model_callbacks = callbacks_list
+    mock_agent = types.Agent()
+    cb1 = types.Callback(python_code="c1")
+    cb2 = types.Callback(python_code="c2")
+    mock_agent.before_model_callbacks.extend([cb1, cb2])
     mock_get_agent.return_value = mock_agent
 
     cb_client = Callbacks(app_name="projects/p/locations/l/apps/a")
 
     cb_client.delete_callback("agent1", "before_model", index=0)
 
-    assert len(callbacks_list) == 1
-    assert callbacks_list[0] == mock_cb2
+    assert len(mock_agent.before_model_callbacks) == 1
+    assert mock_agent.before_model_callbacks[0].python_code == "c2"
     cb_client.client.update_agent.assert_called_once()
 
 
