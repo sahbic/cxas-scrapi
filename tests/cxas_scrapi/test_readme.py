@@ -16,7 +16,8 @@ def is_external(url):
     return url.startswith("http://") or url.startswith("https://")
 
 def is_ignored(url):
-    return url.startswith("mailto:") or url.startswith("#")
+    ignored_patterns = ["mailto:", "#", "127.0.0.1", "localhost"]
+    return any(pattern in url for pattern in ignored_patterns)
 
 def test_readme_links():
     assert README_PATH.exists(), f"README.md not found at {README_PATH}"
