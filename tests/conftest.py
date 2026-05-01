@@ -16,10 +16,11 @@ import os
 import sys
 from unittest.mock import MagicMock
 
+import google.cloud.ces_v1beta as real_ces
 import pytest
 
 # Global Test Constants
-TEST_APP_ID = "projects/df-reference/locations/us/apps/f39d3ab5-a463-4025-8437-31fd09685d6b"  # noqa: E501
+TEST_APP_NAME = "projects/mock-project/locations/mock-location/apps/mock-app-id"
 
 # Mock the oauth token globally so tests don't try to
 # invoke Application Default Credentials
@@ -71,7 +72,7 @@ def pytest_collection_modifyitems(config, items):
 
 @pytest.fixture
 def app_id():
-    return TEST_APP_ID
+    return TEST_APP_NAME
 
 
 # Create a mock module structure for google.cloud.ces_v1beta if not
@@ -80,7 +81,7 @@ if "--run-online" not in sys.argv:
     mock_ces = MagicMock()
     mock_ces.AgentServiceClient = MagicMock
     mock_ces.EvaluationServiceClient = MagicMock
-    mock_ces.types = MagicMock()
+    mock_ces.types = real_ces.types
     sys.modules["google.cloud.ces_v1beta"] = mock_ces
 
     # Mock google.cloud.dialogflowcx_v3beta1 for dfcx_exporter offline tests
