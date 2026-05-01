@@ -50,10 +50,19 @@
         "  tool calls concurrently instead of sequentially."
     ],
     "languageSettings": {
-        "defaultLanguageCode": "en"
+        "defaultLanguageCode": "en-US"
     },
     "timeZoneSettings": {
         "timeZone": "America/New_York"
+    },
+    "audioProcessingConfig": {
+        "synthesizeSpeechConfigs": {
+            "en-US": {
+                "speakingRate": 1.0
+            }
+        }
+    },
+    "defaultChannelProfile": {
     },
     "_comment_logging_settings": [
         "LOGGING SETTINGS:",
