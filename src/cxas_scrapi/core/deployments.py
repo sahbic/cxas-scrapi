@@ -14,6 +14,7 @@
 
 """Core Deployments class for CXAS Scrapi."""
 
+from enum import Enum
 from typing import Any, Dict, List
 
 from google.cloud.ces_v1beta import types
@@ -24,6 +25,25 @@ from cxas_scrapi.core.apps import Apps
 
 class Deployments(Apps):
     """Core Class for managing Deployment Resources."""
+
+    class ChannelType(Enum):
+        WEB_UI = "WEB_UI"
+        API = "API"
+        TWILIO = "TWILIO"
+        GOOGLE_TELEPHONY_PLATFORM = "GOOGLE_TELEPHONY_PLATFORM"
+        CONTACT_CENTER_AS_A_SERVICE = "CONTACT_CENTER_AS_A_SERVICE"
+        FIVE9 = "FIVE9"
+        AUDIOCODES = "CONTACT_CENTER_INTEGRATION"
+
+    class Modality(Enum):
+        CHAT_AND_VOICE = "CHAT_AND_VOICE"
+        VOICE_ONLY = "VOICE_ONLY"
+        CHAT_ONLY = "CHAT_ONLY"
+        CHAT_VOICE_AND_VIDEO = "CHAT_VOICE_AND_VIDEO"
+
+    class Theme(Enum):
+        LIGHT = "LIGHT"
+        DARK = "DARK"
 
     def __init__(
         self,
@@ -49,6 +69,46 @@ class Deployments(Apps):
         )
         self.resource_type = "deployments"
         self.app_name = app_name
+
+    @classmethod
+    def _build_web_widget_config(
+        cls, kwargs: Dict[str, Any], mask_paths: List[str] | None = None
+    ) -> types.ChannelProfile.WebWidgetConfig | None:
+        """Helper to build WebWidgetConfig and update mask paths."""
+        wwc_fields = ["modality", "theme", "web_widget_title"]
+        has_wwc_update = any(k in kwargs for k in wwc_fields)
+
+        if not has_wwc_update:
+            return None
+
+        wwc = types.ChannelProfile.WebWidgetConfig()
+
+        if "modality" in kwargs:
+            modality = kwargs.pop("modality")
+            if isinstance(modality, str):
+                modality = cls.Modality[modality.upper()]
+            wwc.modality = getattr(
+                types.ChannelProfile.WebWidgetConfig.Modality, modality.value
+            )
+            if mask_paths is not None:
+                mask_paths.append("channel_profile.web_widget_config.modality")
+
+        if "theme" in kwargs:
+            theme = kwargs.pop("theme")
+            if isinstance(theme, str):
+                theme = cls.Theme[theme.upper()]
+            wwc.theme = getattr(
+                types.ChannelProfile.WebWidgetConfig.Theme, theme.value
+            )
+            if mask_paths is not None:
+                mask_paths.append("channel_profile.web_widget_config.theme")
+
+        if "web_widget_title" in kwargs:
+            wwc.web_widget_title = kwargs.pop("web_widget_title")
+            if mask_paths is not None:
+                mask_paths.append("channel_profile.web_widget_config.web_widget_title")
+
+        return wwc
 
     def list_deployments(self) -> List[types.Deployment]:
         """Lists deployments within a specific app."""
@@ -87,18 +147,49 @@ class Deployments(Apps):
         deployment_id: str,
         display_name: str,
         app_version: str,
-        channel_profile: str = "WEB_AND_MOBILE",
+        channel_type: ChannelType | str = ChannelType.API,
+        modality: Modality | str | None = None,
+        theme: Theme | str | None = None,
+        web_widget_title: str = None,
+        disable_dtmf: bool = False,
+        disable_barge_in_control: bool = False,
     ) -> types.Deployment:
-        """Creates a new deployment."""
+        """Creates a new deployment with specified configuration.
+
+        Note: `modality`, `theme`, and `web_widget_title` are only applicable
+        when `channel_type` is `ChannelType.WEB_UI`.
+        """
+
         deployment = types.Deployment(
             display_name=display_name, app_version=app_version
         )
 
-        # Optionally set channel profile if we want to be explicit
-        if channel_profile:
-            deployment.channel_profile.channel_type = getattr(
-                types.common.ChannelProfile.ChannelType, channel_profile.upper()
-            )
+        # Convert string to enum if needed
+        if isinstance(channel_type, str):
+            channel_type = self.ChannelType[channel_type.upper()]
+
+        channel_profile = types.ChannelProfile()
+
+        channel_profile.channel_type = getattr(
+            types.common.ChannelProfile.ChannelType, channel_type.value
+        )
+
+        channel_profile.disable_dtmf = disable_dtmf
+        channel_profile.disable_barge_in_control = disable_barge_in_control
+
+        if channel_type == self.ChannelType.WEB_UI:
+            wwc_kwargs = {
+                "modality": modality or self.Modality.CHAT_AND_VOICE,
+                "theme": theme or self.Theme.LIGHT,
+            }
+            if web_widget_title:
+                wwc_kwargs["web_widget_title"] = web_widget_title
+
+            wwc = self._build_web_widget_config(wwc_kwargs)
+            if wwc:
+                channel_profile.web_widget_config = wwc
+
+        deployment.channel_profile = channel_profile
 
         request = types.CreateDeploymentRequest(
             parent=self.app_name,
@@ -106,6 +197,7 @@ class Deployments(Apps):
             deployment=deployment,
         )
         return self.client.create_deployment(request=request)
+
 
     def update_deployment(
         self, deployment_id: str, **kwargs
@@ -116,6 +208,48 @@ class Deployments(Apps):
         )
         mask_paths = []
 
+        channel_profile_fields = [
+            "channel_type",
+            "modality",
+            "theme",
+            "web_widget_title",
+            "disable_dtmf",
+            "disable_barge_in_control",
+        ]
+
+        has_channel_profile_update = any(
+            k in kwargs for k in channel_profile_fields
+        )
+
+        if has_channel_profile_update:
+            channel_profile = types.ChannelProfile()
+
+            if "channel_type" in kwargs:
+                channel_type = kwargs.pop("channel_type")
+                if isinstance(channel_type, str):
+                    channel_type = self.ChannelType[channel_type.upper()]
+                channel_profile.channel_type = getattr(
+                    types.common.ChannelProfile.ChannelType, channel_type.value
+                )
+                mask_paths.append("channel_profile.channel_type")
+
+            if "disable_dtmf" in kwargs:
+                channel_profile.disable_dtmf = kwargs.pop("disable_dtmf")
+                mask_paths.append("channel_profile.disable_dtmf")
+
+            if "disable_barge_in_control" in kwargs:
+                channel_profile.disable_barge_in_control = kwargs.pop(
+                    "disable_barge_in_control"
+                )
+                mask_paths.append("channel_profile.disable_barge_in_control")
+
+            wwc = self._build_web_widget_config(kwargs, mask_paths)
+            if wwc:
+                channel_profile.web_widget_config = wwc
+
+            deployment.channel_profile = channel_profile
+
+        # Handle remaining kwargs as top-level fields
         for key, value in kwargs.items():
             setattr(deployment, key, value)
             mask_paths.append(key)
