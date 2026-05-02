@@ -24,15 +24,25 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 import pydantic
+import yaml
 from alive_progress import alive_it
 
 from cxas_scrapi.core.apps import Apps
+from cxas_scrapi.core.conversation_history import ConversationHistory
 from cxas_scrapi.core.sessions import Sessions
 from cxas_scrapi.core.tools import Tools
 from cxas_scrapi.prompts import llm_user_prompts
 from cxas_scrapi.utils.eval_utils import (
+    Conversation as GoldenConversation,
+)
+from cxas_scrapi.utils.eval_utils import (
+    Conversations as GoldenConversations,
+)
+from cxas_scrapi.utils.eval_utils import (
     ExpectationResult,
     ExpectationStatus,
+    ToolCall,
+    Turn,
     evaluate_expectations,
 )
 from cxas_scrapi.utils.gemini import GeminiGenerate
@@ -188,37 +198,34 @@ class LLMUserConversation(Conversation):
         self.expectations = test_case.get("expectations", [])
         self.expectation_results: List[ExpectationResult] = []
 
-    def _next_user_utterance(self) -> tuple[str, Dict[str, Any]]:
-        """Generates the next user utterance and variables to inject based
-        on the conversation history.
-
-        This method uses an LLM to determine the next utterance, considering the
-        current turn, maximum turns, and the completion status of the
-        defined steps.
-
-        Returns:
-          - The generated next user utterance as a string. Returns an empty
-            string if the conversation has reached the maximum number of
-            turns or all steps are completed.
-          - The variables to inject as a dict.
-        """
+    def _check_conversation_status(self) -> bool:
+        """Checks if the conversation should continue."""
         if self.current_turn >= self.max_turns:
-            return "", {}
+            return False
 
         # If all steps are completed, then the conversation is complete.
         if all(
             item.status == StepStatus.COMPLETED for item in self.steps_progress
         ):
-            return "", {}
+            return False
 
-        if self.current_turn == 0:
-            session_params = self.test_case.get("session_parameters", {})
-            if not self.test_case["steps"][0].get("static_utterance", None):
-                return _FIRST_UTTERANCE, session_params
-            inject_vars = self.test_case["steps"][0].get("inject_variables", {})
-            merged_vars = {**session_params, **inject_vars}
-            return self.test_case["steps"][0]["static_utterance"], merged_vars
+        return True
 
+    def _handle_first_turn(self) -> Optional[tuple[str, Dict[str, Any]]]:
+        """Handles the special logic for the first turn."""
+        if self.current_turn != 0:
+            return None
+
+        session_params = self.test_case.get("session_parameters", {})
+        if not self.test_case["steps"][0].get("static_utterance", None):
+            return _FIRST_UTTERANCE, session_params
+
+        inject_vars = self.test_case["steps"][0].get("inject_variables", {})
+        merged_vars = {**session_params, **inject_vars}
+        return self.test_case["steps"][0]["static_utterance"], merged_vars
+
+    def _prepare_llm_prompt(self) -> str:
+        """Prepares the prompt for the LLM user."""
         step_list = self.test_case["steps"]
         json_step_list = json.dumps(
             [Step(**s).model_dump() for s in step_list], indent=2
@@ -237,15 +244,42 @@ class LLMUserConversation(Conversation):
             "{current_step_progress}",
             json_step_progress_list,
         )
+        return prompt
+
+    def _next_user_utterance(self) -> tuple[str, Dict[str, Any]]:
+        """Generates the next user utterance and variables to inject based
+        on the conversation history.
+
+        This method uses an LLM to determine the next utterance, considering the
+        current turn, maximum turns, and the completion status of the
+        defined steps.
+
+        Returns:
+          - The generated next user utterance as a string. Returns an empty
+            string if the conversation has reached the maximum number of
+            turns or all steps are completed.
+          - The variables to inject as a dict.
+        """
+        if not self._check_conversation_status():
+            return "", {}
+
+        first_turn = self._handle_first_turn()
+        if first_turn:
+            return first_turn
+
+        prompt = self._prepare_llm_prompt()
+
         output: LLMUserConversation.Output = self.genai_client.generate(
             prompt=prompt,
             model_name=self.genai_model,
             response_mime_type="application/json",
             response_schema=LLMUserConversation.Output,
         )
+
         if output:
             self.steps_progress = output.step_progresses
             return output.next_user_utterance, {}
+
         return "", {}
 
     def next_user_utterance(
@@ -575,6 +609,150 @@ class SimulationEvals(Apps):
         eval_conv.detailed_trace = detailed_trace
         return eval_conv
 
+    def _prepare_simulation_jobs(
+        self, test_cases: List[Dict[str, Any]], runs: int
+    ) -> List[tuple[Dict[str, Any], int]]:
+        """Prepares a list of simulation jobs to run."""
+        jobs = []
+        for tc in test_cases:
+            for run_idx in range(runs):
+                jobs.append((tc, run_idx))
+        return jobs
+
+    def _run_single_simulation_job(
+        self,
+        tc: Dict[str, Any],
+        run_idx: int,
+        runs: int,
+        model: str,
+        modality: str,
+        verbose: bool,
+        parallel: int,
+    ) -> Dict[str, Any]:
+        """Runs a single simulation job and returns the results."""
+        name = tc["name"]
+        label = f"{name} (run {run_idx + 1}/{runs})"
+        session_id = str(uuid.uuid4())
+        try:
+            _start = time.time()
+
+            conv = self.simulate_conversation(
+                test_case=tc,
+                model=model,
+                session_id=session_id,
+                console_logging=verbose and parallel <= 1,
+                modality=modality,
+            )
+            duration_s = round(time.time() - _start, 1)
+
+            goals_completed = sum(
+                1
+                for p in conv.steps_progress if p.status == StepStatus.COMPLETED
+            )
+            total_goals = len(conv.steps_progress)
+            expectations_met = sum(
+                1
+                for r in conv.expectation_results
+                if r.status == ExpectationStatus.MET
+            )
+            total_exp = len(conv.expectation_results)
+
+            passed = goals_completed == total_goals
+            if total_exp > 0:
+                passed = passed and (expectations_met == total_exp)
+
+            status = "PASS" if passed else "FAIL"
+            if parallel > 1 or not verbose:
+                print(
+                    f"  {status}  {label} | goals: "
+                    f"{goals_completed}/{total_goals} | "
+                    f"expectations: {expectations_met}/{total_exp} | "
+                    f"turns: {conv.current_turn} | {duration_s}s"
+                )
+
+            return {
+                "name": name,
+                "run": run_idx + 1,
+                "passed": passed,
+                "goals": f"{goals_completed}/{total_goals}",
+                "expectations": f"{expectations_met}/{total_exp}",
+                "turns": conv.current_turn,
+                "duration_s": duration_s,
+                "session_id": session_id,
+                "session_parameters": tc.get("session_parameters", {}),
+                "transcript": conv.get_transcript(),
+                "detailed_trace": getattr(conv, "detailed_trace", []),
+                "step_details": [
+                    {
+                        "goal": p.step.goal,
+                        "success_criteria": p.step.success_criteria,
+                        "status": p.status.value,
+                        "justification": p.justification,
+                    }
+                    for p in conv.steps_progress
+                ],
+                "expectation_details": [
+                    {
+                        "expectation": r.expectation,
+                        "status": r.status.value,
+                        "justification": r.justification,
+                    }
+                    for r in conv.expectation_results
+                ],
+            }
+        except Exception as e:
+            print(f"  ERROR  {label}: {e}")
+            return {
+                "name": name,
+                "run": run_idx + 1,
+                "passed": False,
+                "error": str(e),
+            }
+
+    def _aggregate_simulation_results(
+        self,
+        jobs: List[tuple[Dict[str, Any], int]],
+        runs: int,
+        parallel: int,
+        model: str,
+        modality: str,
+        verbose: bool,
+    ) -> List[Dict[str, Any]]:
+        """Aggregates results from multiple simulation jobs."""
+        results = []
+
+        if parallel <= 1:
+            for tc, run_idx in alive_it(jobs, title="Running Simulations"):
+                results.append(
+                    self._run_single_simulation_job(
+                        tc, run_idx, runs, model, modality, verbose, parallel
+                    )
+                )
+        else:
+            max_workers = min(parallel, 25)
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {
+                    executor.submit(
+                        self._run_single_simulation_job,
+                        tc,
+                        run_idx,
+                        runs,
+                        model,
+                        modality,
+                        verbose,
+                        parallel,
+                    ): (tc["name"], run_idx)
+                    for tc, run_idx in jobs
+                }
+                for future in alive_it(
+                    as_completed(futures),
+                    total=len(futures),
+                    title="Running Simulations",
+                ):
+                    results.append(future.result())
+
+        return results
+
     def run_simulations(
         self,
         test_cases: List[Dict[str, Any]],
@@ -594,112 +772,239 @@ class SimulationEvals(Apps):
             modality: 'text' or 'audio'.
             verbose: Whether to log to console (only active if parallel=1).
         """
-        jobs = []
-        for tc in test_cases:
-            for run_idx in range(runs):
-                jobs.append((tc, run_idx))
+        jobs = self._prepare_simulation_jobs(test_cases, runs)
+        return self._aggregate_simulation_results(
+            jobs, runs, parallel, model, modality, verbose
+        )
 
-        results = []
-
-        def _run_job(tc, run_idx):
-            name = tc["name"]
-            label = f"{name} (run {run_idx + 1}/{runs})"
-            session_id = str(uuid.uuid4())
-            try:
-                _start = time.time()
-
-                conv = self.simulate_conversation(
-                    test_case=tc,
-                    model=model,
-                    session_id=session_id,
-                    console_logging=verbose and parallel <= 1,
-                    modality=modality,
-                )
-                duration_s = round(time.time() - _start, 1)
-
-                goals_completed = sum(
-                    1
-                    for p in conv.steps_progress
-                    if p.status == StepStatus.COMPLETED
-                )
-                total_goals = len(conv.steps_progress)
-                expectations_met = sum(
-                    1
-                    for r in conv.expectation_results
-                    if r.status == ExpectationStatus.MET
-                )
-                total_exp = len(conv.expectation_results)
-
-                passed = goals_completed == total_goals
-                if total_exp > 0:
-                    passed = passed and (expectations_met == total_exp)
-
-                status = "PASS" if passed else "FAIL"
-                if parallel > 1 or not verbose:
-                    print(
-                        f"  {status}  {label} | goals: "
-                        f"{goals_completed}/{total_goals} | "
-                        f"expectations: {expectations_met}/{total_exp} | "
-                        f"turns: {conv.current_turn} | {duration_s}s"
-                    )
-
-                return {
-                    "name": name,
-                    "run": run_idx + 1,
-                    "passed": passed,
-                    "goals": f"{goals_completed}/{total_goals}",
-                    "expectations": f"{expectations_met}/{total_exp}",
-                    "turns": conv.current_turn,
-                    "duration_s": duration_s,
-                    "session_id": session_id,
-                    "session_parameters": tc.get("session_parameters", {}),
-                    "transcript": conv.get_transcript(),
-                    "detailed_trace": getattr(conv, "detailed_trace", []),
-                    "step_details": [
-                        {
-                            "goal": p.step.goal,
-                            "success_criteria": p.step.success_criteria,
-                            "status": p.status.value,
-                            "justification": p.justification,
-                        }
-                        for p in conv.steps_progress
-                    ],
-                    "expectation_details": [
-                        {
-                            "expectation": r.expectation,
-                            "status": r.status.value,
-                            "justification": r.justification,
-                        }
-                        for r in conv.expectation_results
-                    ],
-                }
-            except Exception as e:
-                print(f"  ERROR  {label}: {e}")
-                return {
-                    "name": name,
-                    "run": run_idx + 1,
-                    "passed": False,
-                    "error": str(e),
-                }
-
-        if parallel <= 1:
-            for tc, run_idx in alive_it(jobs, title="Running Simulations"):
-                results.append(_run_job(tc, run_idx))
+    def _add_agent_text(self, turn: Turn, text: str) -> None:
+        """Consistently handles adding agent text to a Turn."""
+        if not text:
+            return
+        if turn.agent:
+            if isinstance(turn.agent, list):
+                turn.agent.append(text)
+            else:
+                turn.agent = [turn.agent, text]
         else:
-            max_workers = min(parallel, 25)
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = {
-                    executor.submit(_run_job, tc, run_idx): (
-                        tc["name"],
-                        run_idx,
-                    )
-                    for tc, run_idx in jobs
-                }
-                for future in alive_it(
-                    as_completed(futures),
-                    total=len(futures),
-                    title="Running Simulations",
-                ):
-                    results.append(future.result())
+            turn.agent = text
 
-        return results
+    def _match_tool_response(
+        self, turn: Turn, tool_name: str, response: Any
+    ) -> None:
+        """Matches a tool response to the latest call for the same tool."""
+        if not turn or not turn.tool_calls:
+            return
+
+        for tc_obj in reversed(turn.tool_calls):
+            if tc_obj.action == tool_name and tc_obj.output is None:
+                tc_obj.output = response
+                break
+
+    def _handle_text_chunk(
+        self, chunk: Dict[str, Any], turn: Turn
+    ) -> None:
+        """Processes a text chunk from the platform response."""
+        text = chunk.get("text", "").strip()
+        if text:
+            self._add_agent_text(turn, text)
+
+    def _handle_tool_call_chunk(
+        self, chunk: Dict[str, Any], turn: Turn
+    ) -> None:
+        """Processes a tool call chunk from the platform response."""
+        tc = chunk["tool_call"]
+        tool_name = tc.get("display_name") or tc.get("tool")
+        args = Sessions._expand_pb_struct(tc.get("args", {}))
+        turn.tool_calls.append(ToolCall(action=tool_name, args=args))
+
+    def _handle_tool_response_chunk(
+        self, chunk: Dict[str, Any], turn: Turn
+    ) -> None:
+        """Processes a tool response chunk from the platform response."""
+        tr = chunk["tool_response"]
+        tool_name = tr.get("display_name") or tr.get("tool")
+        response = Sessions._expand_pb_struct(tr.get("response", {}))
+        self._match_tool_response(turn, tool_name, response)
+
+    def _handle_agent_transfer_chunk(
+        self, chunk: Dict[str, Any], turn: Turn
+    ) -> None:
+        """Processes an agent transfer chunk from the platform response."""
+        # For golden export, we represent this as a special tool call or skip if
+        # model doesn't support. eval_utils uses it for expectations.
+        at = chunk["agent_transfer"]
+        target = at.get("display_name") or at.get("target_agent", "unknown")
+        # Standardizing as a 'transfer_to_agent' tool call for parity with
+        # eval_utils._process_dataset_turn
+        turn.tool_calls.append(
+            ToolCall(action="transfer_to_agent", args={"agent": target})
+        )
+
+    def _handle_payload_chunk(
+        self, chunk: Dict[str, Any], turn: Turn
+    ) -> None:
+        """Processes a custom payload chunk from the platform response."""
+        # Custom payloads don't have a direct field in Turn/ToolCall model
+        # for golden export usually, but we could add to agent text as a note
+        payload = Sessions._expand_pb_struct(chunk.get("payload", {}))
+        self._add_agent_text(turn, f"[Custom Payload]: {json.dumps(payload)}")
+
+    def _process_platform_chunk(
+        self, chunk: Dict[str, Any], turn: Turn
+    ) -> None:
+        """Dispatches platform chunks to their respective handlers."""
+        if "text" in chunk:
+            self._handle_text_chunk(chunk, turn)
+        elif "tool_call" in chunk:
+            self._handle_tool_call_chunk(chunk, turn)
+        elif "tool_response" in chunk:
+            self._handle_tool_response_chunk(chunk, turn)
+        elif "agent_transfer" in chunk:
+            self._handle_agent_transfer_chunk(chunk, turn)
+        elif "payload" in chunk:
+            self._handle_payload_chunk(chunk, turn)
+
+    def _parse_platform_messages(
+        self, messages: List[Dict[str, Any]], turns: List[Turn]
+    ) -> Optional[Turn]:
+        """Parses a list of platform messages into turns."""
+        current_turn = turns[-1] if turns else None
+
+        for msg in messages:
+            role = msg.get("role", "")
+            chunks = msg.get("chunks", [])
+
+            if role == "user":
+                text = " ".join(
+                    [c.get("text", "") for c in chunks if "text" in c]
+                ).strip()
+                current_turn = Turn(user=text, tool_calls=[])
+                turns.append(current_turn)
+            else:
+                if not current_turn:
+                    current_turn = Turn(tool_calls=[])
+                    turns.append(current_turn)
+
+                for chunk in chunks:
+                    self._process_platform_chunk(chunk, current_turn)
+
+        return current_turn
+
+    def _get_turns_from_platform(self, session_id: str) -> List[Turn]:
+        """Fetches and parses turns from the platform conversation history."""
+        ch = ConversationHistory(app_name=self.app_name, creds=self.creds)
+        conv_obj = ch.get_conversation(session_id)
+        conv_dict = type(conv_obj).to_dict(conv_obj)
+
+        turns = []
+        for p_turn in conv_dict.get("turns", []):
+            self._parse_platform_messages(p_turn.get("messages", []), turns)
+        return turns
+
+    def _parse_trace_line(
+        self, line: str, turns: List[Turn]
+    ) -> Optional[Turn]:
+        """Parses a single line from the local trace."""
+        current_turn = turns[-1] if turns else None
+
+        if line.startswith("User: "):
+            current_turn = Turn(user=line[6:].strip(), tool_calls=[])
+            turns.append(current_turn)
+        elif line.startswith("Agent Text: "):
+            if not current_turn:
+                current_turn = Turn(tool_calls=[])
+                turns.append(current_turn)
+            self._add_agent_text(current_turn, line[12:].strip())
+        elif line.startswith("Agent Transfer: "):
+            if not current_turn:
+                current_turn = Turn(tool_calls=[])
+                turns.append(current_turn)
+            target = line[16:].strip().removeprefix("Transferred to ")
+            current_turn.tool_calls.append(
+                ToolCall(action="transfer_to_agent", args={"agent": target})
+            )
+        elif line.startswith("Custom Payload: "):
+            if not current_turn:
+                current_turn = Turn(tool_calls=[])
+                turns.append(current_turn)
+            self._add_agent_text(
+                current_turn, f"[Custom Payload]: {line[16:].strip()}"
+            )
+
+        return current_turn
+
+    def _get_turns_from_local_trace(self, trace: List[str]) -> List[Turn]:
+        """Parses turns from the local simulation trace (fallback)."""
+        turns = []
+        for line in trace:
+            self._parse_trace_line(line, turns)
+        return turns
+
+    def _get_turns(self, res: Dict[str, Any]) -> List[Turn]:
+        """Orchestrates turn retrieval with platform-to-local fallback."""
+        session_id = res.get("session_id")
+        if not session_id:
+            return []
+
+        try:
+            return self._get_turns_from_platform(session_id)
+        except Exception as e:
+            print(
+                f"Warning: Failed to fetch conversation {session_id} "
+                f"from platform: {e}. Falling back to local trace."
+            )
+            return self._get_turns_from_local_trace(
+                res.get("detailed_trace", [])
+            )
+
+    def export_results_to_golden(
+        self,
+        results: List[Dict[str, Any]],
+        output_path: Optional[str] = None,
+    ) -> str:
+        """Exports simulation results to a Golden Evaluation YAML file.
+
+        Fetches the full conversation trace for each simulation from the
+        platform to ensure accuracy.
+
+        Args:
+            results: The list of results returned by run_simulations.
+            output_path: Optional local path to save the generated YAML.
+
+        Returns:
+            The generated YAML string.
+        """
+        conversations_list = []
+
+        for res in results:
+            turns = self._get_turns(res)
+            if not turns:
+                continue
+
+            expectations = [
+                e["expectation"] for e in res.get("expectation_details", [])
+            ]
+            params = res.get("session_parameters", {})
+
+            conversations_list.append(
+                GoldenConversation(
+                    conversation=res.get("name", "Simulated_Conversation"),
+                    turns=turns,
+                    expectations=expectations,
+                    session_parameters=params,
+                )
+            )
+
+        dataset = GoldenConversations(conversations=conversations_list)
+        yaml_content = yaml.dump(
+            dataset.model_dump(exclude_none=True),
+            sort_keys=False,
+            allow_unicode=True,
+        )
+
+        if output_path:
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write(yaml_content)
+
+        return yaml_content
