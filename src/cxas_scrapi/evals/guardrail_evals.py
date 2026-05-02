@@ -21,7 +21,6 @@ import time
 from typing import Annotated, Any, Dict, List, NamedTuple, Optional
 
 import pandas as pd
-from rich.progress import track
 from google.protobuf.json_format import MessageToDict
 from pydantic import BaseModel, BeforeValidator, Field
 from rich.progress import track
