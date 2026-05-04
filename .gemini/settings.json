@@ -41,7 +41,7 @@
   },
   "skills": {
     "disabled": [
-      "cxas_sim_eval"
+      "cxas-sim-eval"
     ]
   }
 }

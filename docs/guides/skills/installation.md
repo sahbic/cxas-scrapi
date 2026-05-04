@@ -31,7 +31,7 @@ your-project/
 │       │   │       └── post-agent-update.sh
 │       │   ├── hooks/               # Legacy hook scripts
 │       │   └── assets/              # Project templates
-│       └── cxas_sim_eval/
+│       └── cxas-sim-eval/
 │           └── SKILL.md
 ├── .claude/
 │   └── settings.json          # Registers hooks with Claude Code
