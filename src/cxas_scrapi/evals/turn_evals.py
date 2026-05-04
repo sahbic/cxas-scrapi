@@ -24,6 +24,7 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
+import numpy as np
 import yaml
 from google.protobuf.json_format import MessageToDict
 from pydantic import BaseModel, Field, TypeAdapter, model_validator
@@ -37,6 +38,8 @@ from cxas_scrapi.utils.eval_utils import (
     evaluate_expectations,
 )
 from cxas_scrapi.utils.gemini import GeminiGenerate
+
+from sklearn.metrics.pairwise import cosine_similarity
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +77,7 @@ class TurnOperator(str, enum.Enum):
     TOOL_OUTPUT = "tool_output"
     NO_TOOLS_CALLED = "no_tools_called"
     AGENT_TRANSFER = "agent_transfer"
+    FUZZY_MATCH = "fuzzy_match"
 
 
 class TurnExpectation(BaseModel):
@@ -462,11 +466,28 @@ class TurnEvals:
                     )
             elif op == TurnOperator.CONTAINS:
                 actual = full_text.strip()
-                if str(expected) not in actual:
+                if str(expected).lower() not in actual.lower():
                     status = "FAILURE"
                     justification = (
                         f"CONTAINS failed: '{expected}' not found in '{actual}'"
                     )
+            elif op == TurnOperator.FUZZY_MATCH:
+                THRESHOLD = 0.75
+                actual = full_text.strip()
+                embeddings = self.genai_client.generate_embeddings([actual, expected])
+                if len([embedding for embedding in embeddings if embedding is not None]) != 2:
+                    status = "FAILURE"
+                    justification = f"FUZZY_MATCH failed: cannot generate similarity between '{actual}' amd '{expected}'"
+                else:
+                    similarity_score = cosine_similarity(
+                        np.array(embeddings[0]).reshape(1, -1),
+                        np.array(embeddings[1]).reshape(1, -1),
+                    )[0][0]
+                    if similarity_score < THRESHOLD:
+                        status = "FAILURE"
+                        justification = (
+                            f"FUZZY_MATCH failed: similarity between '{actual}' amd '{expected}' is {similarity_score:.2f}"
+                        )
             elif op == TurnOperator.TOOL_CALLED:
                 actual = str(called_tools)
                 found = any(

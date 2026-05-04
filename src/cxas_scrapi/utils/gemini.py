@@ -264,3 +264,29 @@ class GeminiGenerate:
             await asyncio.sleep(sleep_time)
 
         return None
+    
+    def generate_embeddings(
+        self,
+        contents: list[str],
+        model_name: str = "gemini-embedding-001"
+    ) -> list[list[float] | None]:
+        """Generates embeddings using the Gemini model.
+
+        Args:
+            contents: The list of texts to be embedded.
+            model_name: Optional override for the model name.
+
+        Returns:
+            List of the generated embeddings.
+        """
+        target_model = model_name
+
+        try:
+            response = self.client.models.embed_content(
+                model=target_model, contents=contents
+            )
+            if response.embeddings is not None:
+                return [embedding.values for embedding in response.embeddings]
+        except Exception as e:
+            logger.error(f"Gemini embedding generation failed: {e}")
+        return []
