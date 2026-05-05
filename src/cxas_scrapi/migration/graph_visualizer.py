@@ -317,10 +317,7 @@ class HighLevelGraphVisualizer:
         self.edges_accumulator = {}
 
         # Identify entry point
-        entry_point = (
-            self.data.start_playbook
-            or self.data.start_flow
-        )
+        entry_point = self.data.start_playbook or self.data.start_flow
         entry_uuid = (
             self._resolve_to_uuid(entry_point)
             if entry_point

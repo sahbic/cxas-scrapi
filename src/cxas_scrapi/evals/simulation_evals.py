@@ -25,7 +25,7 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 import pydantic
 import yaml
-from alive_progress import alive_it
+from rich.progress import Progress
 
 from cxas_scrapi.core.apps import Apps
 from cxas_scrapi.core.conversation_history import ConversationHistory
@@ -647,7 +647,8 @@ class SimulationEvals(Apps):
 
             goals_completed = sum(
                 1
-                for p in conv.steps_progress if p.status == StepStatus.COMPLETED
+                for p in conv.steps_progress
+                if p.status == StepStatus.COMPLETED
             )
             total_goals = len(conv.steps_progress)
             expectations_met = sum(
@@ -720,36 +721,44 @@ class SimulationEvals(Apps):
     ) -> List[Dict[str, Any]]:
         """Aggregates results from multiple simulation jobs."""
         results = []
+        with Progress() as progress:
+            task_id = progress.add_task(
+                "Running Simulations", total=len(jobs)
+            )
 
-        if parallel <= 1:
-            for tc, run_idx in alive_it(jobs, title="Running Simulations"):
-                results.append(
-                    self._run_single_simulation_job(
-                        tc, run_idx, runs, model, modality, verbose, parallel
+            if parallel <= 1:
+                for tc, run_idx in jobs:
+                    results.append(
+                        self._run_single_simulation_job(
+                            tc,
+                            run_idx,
+                            runs,
+                            model,
+                            modality,
+                            verbose,
+                            parallel,
+                        )
                     )
-                )
-        else:
-            max_workers = min(parallel, 25)
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = {
-                    executor.submit(
-                        self._run_single_simulation_job,
-                        tc,
-                        run_idx,
-                        runs,
-                        model,
-                        modality,
-                        verbose,
-                        parallel,
-                    ): (tc["name"], run_idx)
-                    for tc, run_idx in jobs
-                }
-                for future in alive_it(
-                    as_completed(futures),
-                    total=len(futures),
-                    title="Running Simulations",
-                ):
-                    results.append(future.result())
+                    progress.update(task_id, advance=1)
+            else:
+                max_workers = min(parallel, 25)
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = {
+                        executor.submit(
+                            self._run_single_simulation_job,
+                            tc,
+                            run_idx,
+                            runs,
+                            model,
+                            modality,
+                            verbose,
+                            parallel,
+                        ): (tc["name"], run_idx)
+                        for tc, run_idx in jobs
+                    }
+                    for future in as_completed(futures):
+                        results.append(future.result())
+                        progress.update(task_id, advance=1)
 
         return results
 
@@ -801,9 +810,7 @@ class SimulationEvals(Apps):
                 tc_obj.output = response
                 break
 
-    def _handle_text_chunk(
-        self, chunk: Dict[str, Any], turn: Turn
-    ) -> None:
+    def _handle_text_chunk(self, chunk: Dict[str, Any], turn: Turn) -> None:
         """Processes a text chunk from the platform response."""
         text = chunk.get("text", "").strip()
         if text:
@@ -841,9 +848,7 @@ class SimulationEvals(Apps):
             ToolCall(action="transfer_to_agent", args={"agent": target})
         )
 
-    def _handle_payload_chunk(
-        self, chunk: Dict[str, Any], turn: Turn
-    ) -> None:
+    def _handle_payload_chunk(self, chunk: Dict[str, Any], turn: Turn) -> None:
         """Processes a custom payload chunk from the platform response."""
         # Custom payloads don't have a direct field in Turn/ToolCall model
         # for golden export usually, but we could add to agent text as a note
@@ -902,9 +907,7 @@ class SimulationEvals(Apps):
             self._parse_platform_messages(p_turn.get("messages", []), turns)
         return turns
 
-    def _parse_trace_line(
-        self, line: str, turns: List[Turn]
-    ) -> Optional[Turn]:
+    def _parse_trace_line(self, line: str, turns: List[Turn]) -> Optional[Turn]:
         """Parses a single line from the local trace."""
         current_turn = turns[-1] if turns else None
 

@@ -261,9 +261,7 @@ class CXASTopologyLinker:
                 None,
             )
             if flow_wrapper:
-                root_display_name = flow_wrapper.flow_data.get(
-                    "displayName"
-                )
+                root_display_name = flow_wrapper.flow_data.get("displayName")
 
         root_agent_resource = None
         if root_display_name:

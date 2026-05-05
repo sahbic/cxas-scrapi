@@ -192,9 +192,7 @@ class ChildAgentReferences(Rule):
 
         results = []
         child_agents = agent_config.get("childAgents", [])
-        valid_agents = (
-            context.all_agent_names | context.all_agent_display_names
-        )
+        valid_agents = context.all_agent_names | context.all_agent_display_names
         for child_name in child_agents:
             if child_name not in valid_agents:
                 results.append(

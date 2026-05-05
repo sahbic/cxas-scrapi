@@ -34,6 +34,10 @@ import os
 from datetime import datetime
 
 import pandas as pd
+from rich.console import Console
+from rich.progress import track
+
+console = Console()
 from cxas_scrapi.core.evaluations import Evaluations
 from cxas_scrapi.utils.eval_utils import EvalUtils
 from config import load_app_name, get_project_path
@@ -131,7 +135,7 @@ def cmd_push(args):
     yaml_evals = filter_evals(data, args.priority, getattr(args, 'tag', None))
     print(f"Pushing {len(yaml_evals)} evals to platform...")
 
-    for ev in yaml_evals:
+    for ev in track(yaml_evals, description="Pushing Evals"):
         name = ev["name"]
 
         # Build scenario payload
@@ -173,9 +177,8 @@ def cmd_push(args):
         if name in platform:
             try:
                 client.delete_evaluation(platform[name], force=True)
-                print(f"  Deleted existing: {name}")
             except Exception as e:
-                print(f"  Warning: Failed to delete {name}: {e}")
+                console.print(f"  Warning: Failed to delete {name}: {e}")
 
         # Create new
         try:
@@ -184,9 +187,8 @@ def cmd_push(args):
             ev["eval_id"] = new_id
             ev["last_run_score"] = None
             ev["last_run_id"] = None
-            print(f"  Created: {name} -> {new_id}")
         except Exception as e:
-            print(f"  FAILED: {name}: {e}")
+            console.print(f"  FAILED: {name}: {e}")
 
     save_yaml(data)
     print(f"\nDone. YAML updated with new eval_ids.")
@@ -481,12 +483,11 @@ def cmd_push_goldens(args):
     total_created = 0
     total_updated = 0
 
-    for yf in yaml_files:
-        print(f"\n--- {os.path.basename(yf)} ---")
+    for yf in track(yaml_files, description="Pushing Golden Files"):
         try:
             evals = utils.load_golden_evals_from_yaml(yf)
         except Exception as e:
-            print(f"  Failed to parse: {e}")
+            console.print(f"  Failed to parse {os.path.basename(yf)}: {e}")
             continue
 
         for eval_dict in evals:
@@ -494,11 +495,9 @@ def cmd_push_goldens(args):
             try:
                 result = utils.update_evaluation(eval_dict, app_name=app_name)
                 new_id = result.name.split("/")[-1]
-                # Check if it was created or updated based on output
-                print(f"  Synced: {name} -> {new_id}")
                 total_created += 1
             except Exception as e:
-                print(f"  FAILED: {name}: {e}")
+                console.print(f"  FAILED: {name}: {e}")
 
     print(f"\nDone. Synced {total_created} golden evals.")
 

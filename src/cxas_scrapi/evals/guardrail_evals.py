@@ -21,9 +21,9 @@ import time
 from typing import Annotated, Any, Dict, List, NamedTuple, Optional
 
 import pandas as pd
-from alive_progress import alive_it
 from google.protobuf.json_format import MessageToDict
 from pydantic import BaseModel, BeforeValidator, Field
+from rich.progress import track
 
 from cxas_scrapi.core.agents import Agents
 from cxas_scrapi.core.apps import Apps
@@ -194,8 +194,10 @@ class GuardrailEvals:
             )
 
         results = []
-        for index, row in alive_it(
-            df.iterrows(), total=len(df), title="Running Guardrail Tests"
+        for index, row in track(
+            df.iterrows(),
+            total=len(df),
+            description="Running Guardrail Tests",
         ):
             # Replace NaNs with None for Pydantic validation
             row_dict = {

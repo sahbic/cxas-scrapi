@@ -35,8 +35,7 @@ class FlowDependencyResolver:
             for entity in full_agent_data.entity_types
         }
         self.tools = {
-            self._get_resource_id(tool): tool
-            for tool in full_agent_data.tools
+            self._get_resource_id(tool): tool for tool in full_agent_data.tools
         }
 
         # Map webhooks by both UUID and DisplayName to handle DFCX export
@@ -471,9 +470,7 @@ class FlowTreeVisualizer:
 
         for page_wrap in sorted(
             self.context.get("pages", []),
-            key=lambda page_entry: page_entry.page_data.get(
-                "displayName", ""
-            ),
+            key=lambda page_entry: page_entry.page_data.get("displayName", ""),
         ):
             page = page_wrap.page_data
             page_name = page.get("displayName", "Unnamed")

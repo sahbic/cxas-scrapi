@@ -106,7 +106,9 @@ class Deployments(Apps):
         if "web_widget_title" in kwargs:
             wwc.web_widget_title = kwargs.pop("web_widget_title")
             if mask_paths is not None:
-                mask_paths.append("channel_profile.web_widget_config.web_widget_title")
+                mask_paths.append(
+                    "channel_profile.web_widget_config.web_widget_title"
+                )
 
         return wwc
 
@@ -197,7 +199,6 @@ class Deployments(Apps):
             deployment=deployment,
         )
         return self.client.create_deployment(request=request)
-
 
     def update_deployment(
         self, deployment_id: str, **kwargs

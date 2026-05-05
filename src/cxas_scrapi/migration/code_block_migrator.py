@@ -168,12 +168,20 @@ class ToolCallTransformer(ast.NodeTransformer):
         for dec in node.decorator_list:
             if isinstance(dec, ast.Name):
                 if dec.id in [
-                    "Action", "Handler", "system", "action", "handler"
+                    "Action",
+                    "Handler",
+                    "system",
+                    "action",
+                    "handler",
                 ]:
                     continue
             elif isinstance(dec, ast.Call) and isinstance(dec.func, ast.Name):
                 if dec.func.id in [
-                    "Action", "Handler", "system", "action", "handler"
+                    "Action",
+                    "Handler",
+                    "system",
+                    "action",
+                    "handler",
                 ]:
                     continue
             new_decorators.append(dec)

@@ -353,9 +353,7 @@ class CLIDashboard:
             self.console.print(
                 f"Selected Playbooks: {len(filtered_data.playbooks)}"
             )
-            self.console.print(
-                f"Selected Flows: {len(filtered_data.flows)}"
-            )
+            self.console.print(f"Selected Flows: {len(filtered_data.flows)}")
 
             if Confirm.ask("Proceed to Migration?", default=True):
                 break

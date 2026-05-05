@@ -25,9 +25,9 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 import yaml
-from alive_progress import alive_it
 from google.protobuf.json_format import MessageToDict
 from pydantic import BaseModel, Field, TypeAdapter, model_validator
+from rich.progress import track
 
 from cxas_scrapi.core.sessions import Sessions
 from cxas_scrapi.core.variables import Variables
@@ -667,7 +667,7 @@ class TurnEvals:
             print(f"Error in dependency resolution: {e}")
             raise
 
-        for case in alive_it(sorted_cases, title="Running Turn Tests"):
+        for case in track(sorted_cases, description="Running Turn Tests"):
             print(f"Running Turn Test: {case.name}")
 
             try:
