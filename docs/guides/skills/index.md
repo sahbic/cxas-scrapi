@@ -24,7 +24,7 @@ The `SKILL.md` file has YAML frontmatter that declares the skill's name, descrip
 │   ├── references/           # Sub-skill definitions (build, run, debug)
 │   ├── scripts/hooks/        # Hook scripts for pre-push and post-update
 │   └── assets/               # Project templates
-└── cxas_sim_eval/
+└── cxas-sim-eval/
     └── SKILL.md              # Simulation eval skill
 ```
 

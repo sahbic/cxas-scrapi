@@ -19,6 +19,7 @@ from datetime import datetime
 from typing import Any, Dict, List
 
 from cxas_scrapi.core.tools import Tools
+from cxas_scrapi.utils.gcs_utils import GCSUtils
 
 
 def _escape(text):
@@ -520,6 +521,19 @@ def _get_run_detail(r, ces_base, tools_map):
     return html
 
 
+def _upload_to_gcs(output_path: str, html: str) -> str | None:
+    """Uploads the report to GCS and returns the mTLS URL or None on failure."""
+    try:
+        gcs = GCSUtils()
+        mtls_url = gcs.upload_string(output_path, html)
+        print(f"Report uploaded to GCS: {output_path}")
+        print(f"Authenticated URL: {mtls_url}")
+        return mtls_url
+    except Exception as e:
+        print(f"WARNING: GCS upload failed ({e}). Falling back to local file.")
+        return None
+
+
 def generate_html_report(
     results: List[Dict[str, Any]],
     output_path: str,
@@ -528,9 +542,10 @@ def generate_html_report(
     app_name: str = "",
     wall_clock_s: float = None,
 ):
-    """Generate an HTML report with transcripts, tool calls,
+    """Generate an HTML report and save it locally or upload to GCS.
 
-    and failure details.
+    If output_path starts with 'gs://', the report is uploaded to GCS.
+    If the upload fails, it falls back to saving a local file.
     """
     total = len(results)
     passed = sum(1 for r in results if r.get("passed"))
@@ -593,5 +608,18 @@ def generate_html_report(
         html += "</div></div>\n"
 
     html += "</body></html>"
+
+    if output_path.startswith("gs://"):
+        mtls_url = _upload_to_gcs(output_path, html)
+        if mtls_url:
+            return
+
+        # Fallback to local file if upload failed
+        filename = output_path.rsplit("/", maxsplit=1)[-1]
+        if not filename.endswith(".html"):
+            filename = "report_fallback.html"
+        output_path = filename
+
     with open(output_path, "w") as f:
         f.write(html)
+    print(f"Report saved locally to: {output_path}")

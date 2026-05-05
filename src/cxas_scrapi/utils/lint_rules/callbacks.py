@@ -17,6 +17,7 @@
 Validates agent callback Python files against GECX conventions.
 """
 
+import ast
 import re
 from pathlib import Path
 
@@ -485,53 +486,67 @@ class WrongCallbackSignature(Rule):
         if not expected:
             return []
 
-        fn_name = expected["fn"]
-        pattern = (
-            rf"def\s+{re.escape(fn_name)}"
-            r"\s*\(([^)]*)\)(\s*->\s*[^:]+)?:"
-        )
-        match = re.search(pattern, content, re.DOTALL)
-        if not match:
+        try:
+            tree = ast.parse(content)
+        except SyntaxError:
             return []
 
-        args_str = match.group(1)
-        return_str = match.group(2)
+        fn_name = expected["fn"]
+        func = next(
+            (
+                node
+                for node in ast.walk(tree)
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and node.name == fn_name
+            ),
+            None,
+        )
+        if func is None:
+            return []
+
         params_str = ", ".join(
             f"{k}: {v}" for k, v in expected["params"].items()
         )
         expected_sig = f"def {fn_name}({params_str}) -> {expected['return']}:"
 
+        def _norm(annotation: str) -> str:
+            return re.sub(r"\s+", "", annotation)
+
         results = []
-        for param in (p.strip() for p in args_str.split(",") if p.strip()):
-            parts = param.split(":")
-            param_name = parts[0].strip()
-            expected_type = expected["params"].get(param_name)
+        all_args = (
+            list(func.args.posonlyargs)
+            + list(func.args.args)
+            + list(func.args.kwonlyargs)
+        )
+        for arg in all_args:
+            expected_type = expected["params"].get(arg.arg)
             if not expected_type:
                 continue
-            if len(parts) < 2:  # noqa: PLR2004
+            if arg.annotation is None:
                 results.append(
                     self.make_result(
                         file=rel,
                         message=(
                             f"Parameter"
-                            f" '{param_name}'"
+                            f" '{arg.arg}'"
                             " missing type"
                             " annotation,"
                             f" expected"
-                            f" '{param_name}:"
+                            f" '{arg.arg}:"
                             f" {expected_type}'"
                         ),
                         fix=expected_sig,
                     )
                 )
-            elif parts[1].strip() != expected_type:
-                actual_t = parts[1].strip()
+                continue
+            actual_t = ast.unparse(arg.annotation)
+            if _norm(actual_t) != _norm(expected_type):
                 results.append(
                     self.make_result(
                         file=rel,
                         message=(
                             f"Parameter"
-                            f" '{param_name}'"
+                            f" '{arg.arg}'"
                             f" has type"
                             f" '{actual_t}',"
                             f" expected"
@@ -541,7 +556,7 @@ class WrongCallbackSignature(Rule):
                     )
                 )
 
-        if not return_str:
+        if func.returns is None:
             results.append(
                 self.make_result(
                     file=rel,
@@ -554,8 +569,8 @@ class WrongCallbackSignature(Rule):
                 )
             )
         else:
-            actual = return_str.strip().lstrip("->").strip()
-            if actual != expected["return"]:
+            actual = ast.unparse(func.returns)
+            if _norm(actual) != _norm(expected["return"]):
                 results.append(
                     self.make_result(
                         file=rel,

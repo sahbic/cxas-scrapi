@@ -603,6 +603,130 @@ def test_c009_correct_signature(tmp_path, context):
     assert len(results) == 0
 
 
+def test_c009_before_tool_dict_str_any_no_false_positive(tmp_path, context):
+    """A correctly typed before_tool_callback must not be flagged.
+
+    Regression test for issue #56: the comma inside `dict[str, Any]` used
+    to break the parameter splitter, producing a bogus
+    "Parameter 'input' has type 'dict[str'" error.
+    """
+    from cxas_scrapi.utils.lint_rules.callbacks import WrongCallbackSignature  # noqa: PLC0415,I001
+
+    rule = WrongCallbackSignature()
+    cb_dir = (
+        tmp_path
+        / "agents"
+        / "root"
+        / "before_tool_callbacks"
+        / "before_tool_callbacks_01"
+    )
+    cb_dir.mkdir(parents=True)
+    f = cb_dir / "python_code.py"
+    f.write_text(
+        "def before_tool_callback(\n"
+        "    tool: Tool,\n"
+        "    input: dict[str, Any],\n"
+        "    callback_context: CallbackContext,\n"
+        ") -> Optional[dict[str, Any]]:\n"
+        "    return None\n"
+    )
+
+    results = rule.check(f, f.read_text(), context)
+    assert results == [], [r.message for r in results]
+
+
+def test_c009_after_tool_dict_str_any_no_false_positive(tmp_path, context):
+    """A correctly typed after_tool_callback must not be flagged.
+
+    Covers the `tool_response: dict[str, Any]` parameter from issue #56.
+    """
+    from cxas_scrapi.utils.lint_rules.callbacks import WrongCallbackSignature  # noqa: PLC0415,I001
+
+    rule = WrongCallbackSignature()
+    cb_dir = (
+        tmp_path
+        / "agents"
+        / "root"
+        / "after_tool_callbacks"
+        / "after_tool_callbacks_01"
+    )
+    cb_dir.mkdir(parents=True)
+    f = cb_dir / "python_code.py"
+    f.write_text(
+        "def after_tool_callback(\n"
+        "    tool: Tool,\n"
+        "    input: dict[str, Any],\n"
+        "    callback_context: CallbackContext,\n"
+        "    tool_response: dict[str, Any],\n"
+        ") -> Optional[dict[str, Any]]:\n"
+        "    return None\n"
+    )
+
+    results = rule.check(f, f.read_text(), context)
+    assert results == [], [r.message for r in results]
+
+
+def test_c009_dict_str_any_no_space_no_false_positive(tmp_path, context):
+    """`dict[str,Any]` (no space) is semantically equal to `dict[str, Any]`.
+
+    Regression test for the whitespace-sensitive comparison from issue #56.
+    """
+    from cxas_scrapi.utils.lint_rules.callbacks import WrongCallbackSignature  # noqa: PLC0415,I001
+
+    rule = WrongCallbackSignature()
+    cb_dir = (
+        tmp_path
+        / "agents"
+        / "root"
+        / "before_tool_callbacks"
+        / "before_tool_callbacks_01"
+    )
+    cb_dir.mkdir(parents=True)
+    f = cb_dir / "python_code.py"
+    f.write_text(
+        "def before_tool_callback("
+        "tool: Tool, "
+        "input: dict[str,Any], "
+        "callback_context: CallbackContext"
+        ") -> Optional[dict[str,Any]]:\n"
+        "    return None\n"
+    )
+
+    results = rule.check(f, f.read_text(), context)
+    assert results == [], [r.message for r in results]
+
+
+def test_c009_genuinely_wrong_dict_type_still_caught(tmp_path, context):
+    """Ensure the fix does not silence real type mismatches."""
+    from cxas_scrapi.utils.lint_rules.callbacks import WrongCallbackSignature  # noqa: PLC0415,I001
+
+    rule = WrongCallbackSignature()
+    cb_dir = (
+        tmp_path
+        / "agents"
+        / "root"
+        / "before_tool_callbacks"
+        / "before_tool_callbacks_01"
+    )
+    cb_dir.mkdir(parents=True)
+    f = cb_dir / "python_code.py"
+    f.write_text(
+        "def before_tool_callback("
+        "tool: Tool, "
+        "input: dict[int, Any], "
+        "callback_context: CallbackContext"
+        ") -> Optional[dict[str, Any]]:\n"
+        "    return None\n"
+    )
+
+    results = rule.check(f, f.read_text(), context)
+    messages = [r.message for r in results]
+    assert any(
+        "input" in m and "dict[int, Any]" in m and "dict[str, Any]" in m
+        for m in messages
+    ), messages
+
+
 def test_c010_invalid_syntax(tmp_path, context):
     from cxas_scrapi.utils.lint_rules.callbacks import InvalidPythonSyntax  # noqa: PLC0415,I001
 

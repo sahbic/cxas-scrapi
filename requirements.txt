@@ -23,3 +23,4 @@ graphviz
 rich
 ruff
 google-cloud-dialogflow-cx
+google-cloud-storage

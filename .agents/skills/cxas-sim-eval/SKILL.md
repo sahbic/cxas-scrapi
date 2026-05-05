@@ -1,5 +1,5 @@
 ---
-name: cxas_sim_eval
+name: cxas-sim-eval
 description: >-
   Converts CXAS golden evaluations to SCRAPI SimulationEvals test cases.
   Use when generating high-level, goal-oriented test cases from turn-by-turn evaluation JSONs,
@@ -58,7 +58,7 @@ Fetches evaluations and the list of tools used by the agent from the CES API.
 
 Usage:
 ```bash
-python .agents/skills/cxas_sim_eval/scripts/fetch_app_data.py \
+python .agents/skills/cxas-sim-eval/scripts/fetch_app_data.py \
   --app-name "projects/.../locations/.../apps/..." \
   --output-dir /path/to/output_directory
 ```
@@ -70,7 +70,7 @@ Fetches the full schemas for all tools available in the app.
 
 Usage:
 ```bash
-python .agents/skills/cxas_sim_eval/scripts/fetch_tool_schemas.py \
+python .agents/skills/cxas-sim-eval/scripts/fetch_tool_schemas.py \
   --app-name "projects/.../locations/.../apps/..." \
   --output-dir /path/to/output_directory
 ```
@@ -82,7 +82,7 @@ Converts the fetched evaluations to simulation test cases, using the fetched too
 
 Usage:
 ```bash
-python .agents/skills/cxas_sim_eval/scripts/convert_eval.py \
+python .agents/skills/cxas-sim-eval/scripts/convert_eval.py \
   --output-dir /path/to/output_directory \
   --parallelism 5
 ```
@@ -97,7 +97,7 @@ If the agent has the `intercept_and_score_reasoning` tool enabled, this script w
 
 Usage:
 ```bash
-python .agents/skills/cxas_sim_eval/scripts/run_evals.py \
+python .agents/skills/cxas-sim-eval/scripts/run_evals.py \
   --app-name "projects/.../locations/.../apps/..." \
   --output-dir /path/to/output_directory \
   --parallelism 5 \
@@ -125,5 +125,4 @@ When running evaluations with the `intercept_and_score_reasoning` tool enabled, 
    - **Symptom**: Use of words like "wait", "actually", "on second thought".
    - **Meaning**: The agent is abandoning a plan mid-turn or correcting itself, indicating unclear triggers.
    - **Fix**: Clarify triggers and state transitions in instructions.
-
 

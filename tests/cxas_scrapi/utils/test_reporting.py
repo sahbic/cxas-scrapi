@@ -1,0 +1,169 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from unittest.mock import mock_open, patch
+
+from cxas_scrapi.utils.reporting import (
+    _escape,
+    _fmt_duration,
+    _format_trace_line,
+    _resolve_tool_name,
+    _upload_to_gcs,
+    generate_html_report,
+)
+
+
+@patch("cxas_scrapi.utils.reporting.GCSUtils")
+def test_upload_to_gcs_success(mock_gcs_cls):
+  mock_gcs = mock_gcs_cls.return_value
+  mock_gcs.upload_string.return_value = "https://storage.mtls.cloud.google.com/bucket/report.html"
+
+  res = _upload_to_gcs("gs://bucket/report.html", "<html></html>")
+  assert res == "https://storage.mtls.cloud.google.com/bucket/report.html"
+
+
+@patch("cxas_scrapi.utils.reporting.GCSUtils")
+def test_upload_to_gcs_failure(mock_gcs_cls):
+  mock_gcs = mock_gcs_cls.return_value
+  mock_gcs.upload_string.side_effect = Exception("error")
+
+  res = _upload_to_gcs("gs://bucket/report.html", "<html></html>")
+  assert res is None
+
+
+@patch("cxas_scrapi.utils.reporting._upload_to_gcs")
+@patch("builtins.open", new_callable=mock_open)
+def test_generate_html_report_gcs_success(mock_file, mock_upload):
+  mock_upload.return_value = "https://url"
+  results = [{"name": "test", "passed": True, "run": 1}]
+
+  generate_html_report(results, "gs://bucket/report.html", "text", "model")
+
+  mock_upload.assert_called_once()
+  mock_file.assert_not_called()
+
+
+@patch("cxas_scrapi.utils.reporting._upload_to_gcs")
+@patch("builtins.open", new_callable=mock_open)
+def test_generate_html_report_gcs_fallback_with_extension(
+    mock_file, mock_upload):
+  mock_upload.return_value = None
+  results = [{"name": "test", "passed": True, "run": 1}]
+
+  generate_html_report(results, "gs://bucket/fail_report.html", "text", "model")
+
+  mock_upload.assert_called_once()
+  mock_file.assert_called_once_with("fail_report.html", "w")
+
+
+@patch("cxas_scrapi.utils.reporting._upload_to_gcs")
+@patch("builtins.open", new_callable=mock_open)
+def test_generate_html_report_gcs_fallback_no_extension(mock_file, mock_upload):
+  mock_upload.return_value = None
+  results = [{"name": "test", "passed": True, "run": 1}]
+
+  # Path with no extension
+  generate_html_report(results, "gs://bucket/no_ext", "text", "model")
+
+  mock_upload.assert_called_once()
+  mock_file.assert_called_once_with("report_fallback.html", "w")
+
+
+@patch("cxas_scrapi.utils.reporting.Tools")
+@patch("builtins.open", new_callable=mock_open)
+def test_generate_html_report_tools_failure(mock_file, mock_tools_cls):
+  # Simulate Tools(app_name).get_tools_map() failing
+  mock_tools_cls.return_value.get_tools_map.side_effect = Exception(
+      "Tools failed")
+
+  results = [{"name": "test", "passed": True, "run": 1}]
+  generate_html_report(results,
+                       "local.html",
+                       "text",
+                       "model",
+                       app_name="projects/p")
+
+  mock_file.assert_called_once_with("local.html", "w")
+
+
+@patch("builtins.open", new_callable=mock_open)
+def test_generate_html_report_local(mock_file):
+  results = [{
+      "name":
+          "test_eval",
+      "passed":
+          False,
+      "error":
+          "Timeout",
+      "run":
+          1,
+      "session_id":
+          "sess123",
+      "turns":
+          5,
+      "detailed_trace": ["User: hello", "Agent Text: hi"],
+      "step_details": [{
+          "goal": "g",
+          "status": "Completed",
+          "success_criteria": "c",
+          "justification": "j"
+      }],
+      "expectation_details": [{
+          "expectation": "e",
+          "status": "Met",
+          "justification": "j2"
+      }]
+  }]
+
+  generate_html_report(results=results,
+                       output_path="local.html",
+                       modality="audio",
+                       model="gemini-3.1-pro-preview",
+                       app_name="projects/p1/locations/l1/apps/a1",
+                       wall_clock_s=120.5)
+
+  mock_file.assert_called_once_with("local.html", "w")
+  content = mock_file().write.call_args[0][0]
+  assert "Simulation Eval Report" in content
+  assert "0.0%" in content
+  assert "audio" in content
+  assert "gemini-3.1-pro-preview" in content
+  assert "2.0m" in content
+  assert "test_eval" in content
+  assert "Timeout" in content
+  assert "sess123" in content
+
+
+def test_fmt_duration():
+  assert _fmt_duration(None) == ""
+  assert _fmt_duration(30) == "30.0s"
+  assert _fmt_duration(90) == "1.5m"
+
+
+def test_escape():
+  assert _escape("<script>&\"") == "&lt;script&gt;&amp;&quot;"
+
+
+def test_resolve_tool_name():
+  tools_map = {"projects/p/tools/t1": "MyTool"}
+  assert _resolve_tool_name("projects/p/tools/t1", tools_map) == "MyTool"
+  assert _resolve_tool_name("projects/p/tools/t2", tools_map) == "t2"
+  assert _resolve_tool_name(None, tools_map) is None
+
+
+def test_format_trace_line():
+  tools_map = {"path/to/tool": "GreatTool"}
+  line = "Tool Call: path/to/tool with args {}"
+  assert "GreatTool" in _format_trace_line(line, tools_map)
+  assert "Unrelated" in _format_trace_line("Unrelated", tools_map)

@@ -205,6 +205,7 @@ Patrick Marlow - [pmarlow@google.com](mailto:pmarlow@google.com) - [@kmaphoenix]
 
 Project Link: [https://github.com/GoogleCloudPlatform/cxas-scrapi](https://github.com/GoogleCloudPlatform/cxas-scrapi)
 
-<!-- ACKNOWLEDGEMENTS -->
-# Acknowledgements
-[Google Cloud Customer Engagement AI](https://docs.cloud.google.com/customer-engagement-ai/conversational-agents/ps)
+<!-- REFERENCES -->
+# References
+* [CX Agent Studio Documentation](https://docs.cloud.google.com/customer-engagement-ai/conversational-agents/ps)
+* [CX Agent Studio Console](https://ces.cloud.google.com/)

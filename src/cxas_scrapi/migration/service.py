@@ -97,7 +97,7 @@ class MigrationService:
             project_id=project_id,
             location=gemini_location,
             credentials=credentials,
-            model_name=default_model,
+            model_name="gemini-3.1-pro-preview",
         )
 
         self.exporter = ConversationalAgentsAPI()
@@ -365,14 +365,14 @@ class MigrationService:
                     )
                     if (
                         full_tool_name
-                        not in playbook_to_code_tools_map[pb_name]
+                        not in playbook_to_code_tools_map[playbook_name]
                     ):
-                        playbook_to_code_tools_map[pb_name].append(
+                        playbook_to_code_tools_map[playbook_name].append(
                             full_tool_name
                         )
 
                 master_inline_action_map.update(action_to_tool_map)
-                playbook_to_code_dependencies_map[pb_name].update(
+                playbook_to_code_dependencies_map[playbook_name].update(
                     referenced_toolsets
                 )
 
@@ -439,6 +439,17 @@ class MigrationService:
         # --- 8. Background Processing for Flows (Phase 2) ---
         flows = self.source_agent_data.flows
         if flows:
+            app_id = self.ir.metadata.app_id
+            app_url = (
+                f"https://ces.cloud.google.com/projects/{self.project_id}"
+                f"/locations/{self.location}/apps/{app_id}"
+            )
+            logger.info(
+                f"\nACCESS YOUR CXAS AGENT HERE:\n{app_url}\n\n"
+                f"*(Note: Background processes are still running and more "
+                f"sub-agents and other resources are currently being "
+                f"migrated!)*\n"
+            )
             logger.info(
                 f"\nLaunching parallel Analysis & Architecture for "
                 f"{len(flows)} flows..."
@@ -745,14 +756,6 @@ class MigrationService:
                     elif hasattr(ms, "model"):
                         model_to_use = ms.model
 
-                logger.info(
-                    f"DEBUG TOOLSETS PAYLOAD for {display_name}: "
-                    f"{ps_agent_payload.get('toolsets')}"
-                )
-                logger.info(
-                    f"DEBUG TOOLS PAYLOAD for {display_name}: "
-                    f"{ps_agent_payload.get('tools')}"
-                )
                 new_ps_agent = self.ps_agents.create_agent(
                     display_name=display_name,
                     model=model_to_use,
@@ -875,7 +878,6 @@ class MigrationService:
         console = Console(file=buf)
         console.print(viz.build_tree())
         tree_view = buf.getvalue()
-        print(f">>> DEBUG: tree_view len: {len(tree_view)}")
 
         # Step 2A: Architecture Expert Blueprinting
         blueprint_2a = await self.designer.run_step_2a(
