@@ -296,7 +296,21 @@ def ansi_to_html(text):
         result += '</span>'
     return result
 
-def generate_html_report(results, evals_dir, app_name):
+def _upload_to_gcs(output_path, html_content):
+    """Uploads report to GCS and returns mTLS URL or None."""
+    try:
+        from cxas_scrapi.utils.gcs_utils import GCSUtils
+        gcs = GCSUtils()
+        mtls_url = gcs.upload_string(output_path, html_content)
+        print(f"Report uploaded to GCS: {output_path}")
+        print(f"Authenticated URL: {mtls_url}")
+        return mtls_url
+    except Exception as e:
+        print(f"WARNING: GCS upload failed ({e}). Falling back to local file.")
+        return None
+
+
+def generate_html_report(results, output_path, app_name):
     html_content = """
     <html>
     <head>
@@ -513,10 +527,20 @@ def generate_html_report(results, evals_dir, app_name):
     </html>
     """
     
-    output_path = os.path.abspath(os.path.join(evals_dir, "..", "summary.html"))
+    if output_path.startswith("gs://"):
+        mtls_url = _upload_to_gcs(output_path, html_content)
+        if mtls_url:
+            return
+
+        # Fallback to local file if upload failed
+        filename = output_path.split("/")[-1]
+        if not filename.endswith(".html"):
+            filename = "summary_fallback.html"
+        output_path = filename
+
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(html_content)
-    print(f"\\nGenerated HTML summary report at: {output_path}")
+    print(f"\nGenerated HTML summary report at: {output_path}")
 
 def main():
     parser = argparse.ArgumentParser(description="Run CXAS Simulation Evaluations.")
@@ -528,6 +552,14 @@ def main():
     parser.add_argument("--skip-analysis", action="store_true", help="Skip cognitive diagnostics and LLM analysis")
     parser.add_argument("--modality", type=str, default="text", help="Simulation modality (text or audio)")
     parser.add_argument("--runs-per-eval", type=int, default=1, help="Number of times to run each evaluation")
+    parser.add_argument(
+        "--gcs-report-path",
+        type=str,
+        default=None,
+        help=(
+            "GCS URI to upload the report to (e.g. gs://bucket/report.html)"
+        ),
+    )
     args = parser.parse_args()
 
     evals_dir = os.path.join(args.output_dir, 'sim_evals')
@@ -570,7 +602,10 @@ def main():
                     "run_index": run_idx
                 })
 
-    generate_html_report(results_list, evals_dir, args.app_name)
+    report_path = args.gcs_report_path or os.path.abspath(
+        os.path.join(evals_dir, "..", "summary.html")
+    )
+    generate_html_report(results_list, report_path, args.app_name)
 
 if __name__ == "__main__":
     main()

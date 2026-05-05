@@ -321,8 +321,33 @@ def _format_trace_line(line, tools_map):
     return line
 
 
-def generate_html_report(results, output_path, modality, model, app_name="", wall_clock_s=None):
-    """Generate an HTML report with transcripts, tool calls, and failure details."""
+def _upload_to_gcs(output_path, html):
+    """Uploads report to GCS and returns mTLS URL or None."""
+    try:
+        from cxas_scrapi.utils.gcs_utils import GCSUtils
+        gcs = GCSUtils()
+        mtls_url = gcs.upload_string(output_path, html)
+        print(f"Report uploaded to GCS: {output_path}")
+        print(f"Authenticated URL: {mtls_url}")
+        return mtls_url
+    except Exception as e:
+        print(f"WARNING: GCS upload failed ({e}). Falling back to local file.")
+        return None
+
+
+def generate_html_report(
+    results,
+    output_path,
+    modality,
+    model,
+    app_name="",
+    wall_clock_s=None,
+):
+    """Generate an HTML report and save it locally or upload to GCS.
+
+    If output_path starts with 'gs://', the report is uploaded to GCS.
+    If the upload fails, it falls back to saving a local file.
+    """
     total = len(results)
     passed = sum(1 for r in results if r.get("passed"))
     errors = sum(1 for r in results if "error" in r)
@@ -562,8 +587,21 @@ function jumpToRun(evalName, runIdx) {{
         html += '</div></div>\n'
 
     html += "</body></html>"
+
+    if output_path.startswith("gs://"):
+        mtls_url = _upload_to_gcs(output_path, html)
+        if mtls_url:
+            return
+
+        # Fallback to local file if upload failed
+        filename = output_path.split("/")[-1]
+        if not filename.endswith(".html"):
+            filename = "report_fallback.html"
+        output_path = filename
+
     with open(output_path, "w") as f:
         f.write(html)
+    print(f"Report saved locally to: {output_path}")
 
 
 def _run_single_eval(app_name, tc, run_idx, runs, model, modality, verbose):
@@ -773,10 +811,19 @@ def cmd_run(args):
     with open(json_path, "w") as f:
         json.dump(output, f, indent=2, default=str)
 
-    html_path = os.path.join(REPORTS_DIR, f"sim_report_{ts}.html")
-    generate_html_report(all_results, html_path, modality, model, app_name, wall_clock_s=wall_clock_s)
+    report_path = getattr(args, "gcs_report_path", None) or os.path.join(
+        REPORTS_DIR, f"sim_report_{ts}.html"
+    )
+    generate_html_report(
+        all_results,
+        report_path,
+        modality,
+        model,
+        app_name,
+        wall_clock_s=wall_clock_s,
+    )
     print(f"\nResults: {json_path}")
-    print(f"Report:  {html_path}")
+    print(f"Report:  {report_path}")
 
 
 def main():
@@ -807,6 +854,12 @@ def main():
     p_run.add_argument("--runs", type=int, default=1)
     p_run.add_argument("--parallel", type=int, default=1, help="Number of concurrent sessions (default: 1)")
     p_run.add_argument("--verbose", action="store_true")
+    p_run.add_argument(
+        "--gcs-report-path",
+        type=str,
+        default=None,
+        help="GCS URI to upload report to (e.g. gs://bucket/report.html)",
+    )
 
     args = parser.parse_args()
     commands = {"list": cmd_list, "convert": cmd_convert, "run": cmd_run}
