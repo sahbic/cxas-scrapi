@@ -27,34 +27,43 @@ Bella Notte is the canonical reference implementation of the [Slot Machine Patte
     bella_notte/
     ├── gecx-config.json          ← SCRAPI configuration
     ├── cxas_app/
+    │   ├── app.json
     │   ├── agents/
     │   │   └── Bella_Notte_Host/
-    │   │       └── instruction.txt
+    │   │       ├── Bella_Notte_Host.json
+    │   │       ├── instruction.txt
+    │   │       ├── before_agent_callbacks/
+    │   │       │   └── before_agent_callbacks_01/
+    │   │       │       └── python_code.py
+    │   │       └── before_model_callbacks/
+    │   │           └── before_model_callbacks_01/
+    │   │               └── python_code.py
     │   ├── tools/
     │   │   ├── set_party_size/
+    │   │   │   ├── set_party_size.json
     │   │   │   └── python_function/
     │   │   │       └── python_code.py
     │   │   ├── set_preferred_date/
+    │   │   │   ├── set_preferred_date.json
     │   │   │   └── python_function/
     │   │   │       └── python_code.py
     │   │   ├── set_guest_name/
+    │   │   │   ├── set_guest_name.json
     │   │   │   └── python_function/
     │   │   │       └── python_code.py
     │   │   ├── set_selected_time/
+    │   │   │   ├── set_selected_time.json
     │   │   │   └── python_function/
     │   │   │       └── python_code.py
     │   │   └── set_special_requests/
+    │   │       ├── set_special_requests.json
     │   │       └── python_function/
     │   │           └── python_code.py
-    │   ├── callbacks/
-    │   │   └── before_model_callback/
-    │   │       └── python_function/
-    │   │           └── python_code.py
-    │   └── variableDeclarations/
-    │       └── sm.json
-    └── evaluations/
-        ├── Happy_Path_Linear_Flow.json
-        └── Scenario_Full_Booking.json
+    │   └── evaluations/
+    │       ├── Happy_Path_-_Linear_Reservation_Flow/
+    │       │   └── Happy_Path_-_Linear_Reservation_Flow.json
+    │       └── Scenario_-_Full_Booking_Flow/
+    │           └── Scenario_-_Full_Booking_Flow.json
     ```
 
 === "`gecx-config.json`"

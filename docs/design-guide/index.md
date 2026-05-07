@@ -50,16 +50,26 @@ A well-organized agent project keeps configuration, code, tests, and documentati
 <project>/
 ├── gecx-config.json          # GCP project, app ID, modality
 ├── cxas_app/
-│   ├── agents/               # Agent definitions and instructions
-│   ├── tools/                # Tool implementations
-│   ├── callbacks/            # Callback handlers
-│   └── variables/            # Variable definitions
-├── tdd.md                    # Technical Design Document — source of truth
-├── evals/
-│   ├── golden/               # Golden test cases (*.yaml)
-│   ├── simulations/          # Simulated conversation flows
-│   ├── tool_tests/           # Direct tool invocation tests
-│   └── callback_tests/       # Callback handler tests
+│   ├── app.json              # App resource definition
+│   ├── agents/
+│   │   └── My_Agent/
+│   │       ├── My_Agent.json               # Agent config
+│   │       ├── instruction.txt             # Agent instruction
+│   │       ├── before_agent_callbacks/
+│   │       │   └── before_agent_callbacks_01/
+│   │       │       └── python_code.py
+│   │       └── before_model_callbacks/
+│   │           └── before_model_callbacks_01/
+│   │               └── python_code.py
+│   ├── tools/
+│   │   └── my_tool/
+│   │       ├── my_tool.json                # Tool schema
+│   │       └── python_function/
+│   │           └── python_code.py
+│   ├── evaluations/          # Golden evals (each in its own named folder)
+│   ├── evaluationDatasets/   # Shared eval datasets
+│   └── evaluationExpectations/ # Reusable eval expectations
+├── evals/                    # Local/draft eval files (pre-push)
 ├── eval-reports/             # HTML evaluation reports
 └── experiment_log.md         # Iteration history and decisions
 ```

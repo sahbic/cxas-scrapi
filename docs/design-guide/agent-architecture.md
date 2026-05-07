@@ -39,27 +39,29 @@ A single agent handles the entire conversation. All tools, instructions, and sta
 bella_notte/
 ├── gecx-config.json
 ├── cxas_app/
+│   ├── app.json
 │   ├── agents/
-│   │   └── reservation_agent/
-│   │       └── reservation_agent.yaml
+│   │   └── Bella_Notte_Host/
+│   │       ├── Bella_Notte_Host.json
+│   │       ├── instruction.txt
+│   │       ├── before_agent_callbacks/
+│   │       │   └── before_agent_callbacks_01/
+│   │       │       └── python_code.py
+│   │       └── before_model_callbacks/
+│   │           └── before_model_callbacks_01/
+│   │               └── python_code.py
 │   ├── tools/
-│   │   ├── check_availability/
-│   │   │   ├── check_availability.json
-│   │   │   └── check_availability.py
-│   │   ├── create_reservation/
-│   │   │   ├── create_reservation.json
-│   │   │   └── create_reservation.py
-│   │   └── cancel_reservation/
-│   │       ├── cancel_reservation.json
-│   │       └── cancel_reservation.py
-│   ├── callbacks/
-│   │   └── session_init.py
-│   └── variables/
-│       └── reservation_context.yaml
-├── tdd.md
-└── evals/
-    ├── golden/
-    └── simulations/
+│   │   ├── set_party_size/
+│   │   │   ├── set_party_size.json
+│   │   │   └── python_function/
+│   │   │       └── python_code.py
+│   │   └── create_reservation/
+│   │       ├── create_reservation.json
+│   │       └── python_function/
+│   │           └── python_code.py
+│   └── evaluations/
+│       └── Happy_Path_-_Linear_Flow/
+│           └── Happy_Path_-_Linear_Flow.json
 ```
 
 ---
@@ -87,30 +89,35 @@ Multiple agents divide responsibility. One agent typically acts as the orchestra
 ### Workspace structure
 
 ```
-bella_notte/
+my_agent/
 ├── gecx-config.json
 ├── cxas_app/
+│   ├── app.json
 │   ├── agents/
-│   │   ├── root_agent/
-│   │   │   └── root_agent.yaml       # Orchestrator — routes to sub-agents
-│   │   ├── reservation_agent/
-│   │   │   └── reservation_agent.yaml
-│   │   └── cancellation_agent/
-│   │       └── cancellation_agent.yaml
+│   │   ├── Root_Agent/
+│   │   │   ├── Root_Agent.json        # Orchestrator — routes to sub-agents
+│   │   │   ├── instruction.txt
+│   │   │   └── before_model_callbacks/
+│   │   │       └── before_model_callbacks_01/
+│   │   │           └── python_code.py
+│   │   ├── Reservation_Agent/
+│   │   │   ├── Reservation_Agent.json
+│   │   │   └── instruction.txt
+│   │   └── Cancellation_Agent/
+│   │       ├── Cancellation_Agent.json
+│   │       └── instruction.txt
 │   ├── tools/
 │   │   ├── check_availability/
-│   │   ├── create_reservation/
-│   │   ├── modify_reservation/
+│   │   │   ├── check_availability.json
+│   │   │   └── python_function/
+│   │   │       └── python_code.py
 │   │   └── cancel_reservation/
-│   ├── callbacks/
-│   │   ├── session_init.py
-│   │   └── route_intent.py
-│   └── variables/
-│       └── reservation_context.yaml
-├── tdd.md
-└── evals/
-    ├── golden/
-    └── simulations/
+│   │       ├── cancel_reservation.json
+│   │       └── python_function/
+│   │           └── python_code.py
+│   └── evaluations/
+│       └── Happy_Path/
+│           └── Happy_Path.json
 ```
 
 ---
