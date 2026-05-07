@@ -308,6 +308,8 @@ When the user has provided values that are awaiting confirmation:
 
 When a setter tool just created pending values (the prior invocation had no pending, this one does), the framework also hides `confirm_pending` and `reject_pending`. This forces the LLM to read back the values to the user before confirming. Without this, the LLM sometimes calls `reject_pending` → setter → `confirm_pending` all in one turn, skipping the readback step entirely.
 
+Additionally, during fresh pending the **setter for each slot already in `pending`** is also hidden. This prevents the LLM from re-calling the same setter during the readback phase (e.g., `set_special_requests` right after `set_special_requests` just ran), which would otherwise push the pending state from "fresh" to "awaiting_confirmation" and allow `confirm_pending` to fire on the next invocation — skipping the readback entirely.
+
 ### 4.4 Conditional Slots
 
 Slots can have a `condition` callable that determines whether the slot is active. Inactive slots are automatically hidden (setter not visible), skipped by the question-finding logic, and don't block tasks that list them as inputs.
@@ -564,20 +566,67 @@ Multiple slots can be confirmed together. If the user provides `num_guests` and 
 
 The user confirms once, and both move to `filled` together.
 
-### 7.3 Readback Transition Preemption
+### 7.3 Auto-Confirm: Deterministic Confirmation Short-Circuit
 
-After the user confirms readback (`confirm_pending`), the framework preempts the LLM with the next question rather than relying on the LLM to generate it. This prevents a class of failures where the LLM, confused by complex multi-turn conversation context (especially after reject → re-ask → confirm cycles), fails to produce a valid response.
+Relying on the LLM to call `confirm_pending` when the user says "yes" introduces flakiness — the LLM sometimes misidentifies the intent, loops back into readback, or re-reads values instead of confirming. For **short, pure affirmatives** the framework bypasses the LLM entirely.
 
 **How it works:**
 
-1. `confirm_pending` sets `sm["_readback_transition"] = True` on success (alongside committing pending → filled).
+When the callback fires at the start of a user turn (i.e., the user just sent a message, not a post-tool re-invocation) and the current phase is `awaiting_confirmation`, the callback checks whether the user's message is a pure affirmative using `_is_affirmative()`:
+
+```python
+_AFFIRMATIVES = frozenset({
+    "yes", "yeah", "yep", "yup", "correct", "right",
+    "sure", "sounds good", "ok", "okay", "perfect", "great",
+    "exactly", "confirmed", "absolutely", "that's right",
+    "that's correct", "looks right", ...
+})
+_CORRECTION_SIGNALS = frozenset({
+    "but", "actually", "wait", "change", "not", "no",
+    "wrong", "instead", "different", ...
+})
+_STRIP_PUNCT = str.maketrans("", "", ".,;:!?\"'")
+
+def _is_affirmative(text: str) -> bool:
+    normalized = text.lower().strip().rstrip(".,!? ")
+    if normalized in _AFFIRMATIVES:
+        return True
+    # Strip punctuation from each word so "Yes, that's correct"
+    # matches the same as "Yes that's correct".
+    words = [w.translate(_STRIP_PUNCT) for w in normalized.split()]
+    if len(words) <= 5 and words and words[0] in _AFFIRMATIVES:
+        return not any(w in _CORRECTION_SIGNALS for w in words[1:])
+    return False
+```
+
+If `_is_affirmative` returns `True`, the callback:
+
+1. Merges `pending → filled` directly (no LLM call, no `confirm_pending` tool).
+2. Sets `sm["_readback_transition"] = True` to trigger preemption with the next question.
+3. Resets `sm["_progress_turns"] = 0` (confirmation is forward progress).
+4. Pops `sm["_readback_stall"]` (confirmation resolves any stall).
+5. Transitions `phase` to `"collection"`.
+
+The auto-confirm gate **only fires on user-turn callbacks** (`last_user_text` is non-empty). Post-tool re-invocations (where the last content is a function response, not a user message) never trigger auto-confirm, preventing double-firing within the same turn.
+
+**Correction detection:** Messages like "Yes, but make it 6" are NOT auto-confirmed because "but" is a correction signal. Messages like "Yes, that's correct" ARE auto-confirmed because punctuation is stripped from words before comparison ("that's" → "thats", no correction signals). Only messages where `len(words) <= 5` are considered (longer messages are left to the LLM).
+
+**Why 5 words?** Short affirmatives are unambiguous. Longer messages may contain corrections, clarifications, or new information that the LLM should process. Capping at 5 words bounds the false-positive risk.
+
+### 7.4 Readback Transition Preemption
+
+After the user confirms a readback — either via `confirm_pending` (tool call) or auto-confirm (callback short-circuit) — the framework preempts the LLM with the next question rather than relying on the LLM to generate it. This prevents a class of failures where the LLM, confused by complex multi-turn conversation context (especially after reject → re-ask → confirm cycles), fails to produce a valid response.
+
+**How it works:**
+
+1. `confirm_pending` or auto-confirm sets `sm["_readback_transition"] = True`.
 2. The callback pops this flag before DAG evaluation.
-3. After the DAG computes the next action, if `_readback_transition` was true and the action is `next_question`, the callback preempts with `"Wonderful! {next_question}"`.
-4. If the DAG action is `fire` instead (e.g., confirming the date triggers FindAvailableTimes), the existing task fire preemption handles it — the readback transition flag is consumed but unused.
+3. After the DAG computes the next action, if `_readback_transition` was true and the action is `next_question`, the callback preempts with `"{prefix} {next_question}"` (prefix chosen randomly from `confirm_transition_prefix` list in config, e.g. `["Wonderful!", "Perfect!", "Great!"]`).
+4. If the DAG action is `fire` instead (e.g., confirming the date triggers FindAvailableTimes), the existing task fire preemption handles it — the readback transition flag is consumed but the task preemption takes precedence.
 
-The `"Wonderful!"` prefix ensures preempted post-confirmation responses still sound warm and natural, passing persona evaluation checks. `reject_pending` does **not** set this flag — after rejections, the LLM generates its own response naturally (e.g., "Okay, my apologies! How many people will be in your party?"), which preserves conversational warmth.
+The random prefix list ensures preempted post-confirmation responses still sound warm and varied, passing persona evaluation checks. `reject_pending` does **not** set this flag — after rejections, the LLM generates its own response naturally (e.g., "Okay, my apologies! How many people will be in your party?"), which preserves conversational warmth.
 
-### 7.4 Readback and Tool Visibility Interaction
+### 7.5 Readback and Tool Visibility Interaction
 
 During readback, tool visibility ensures only valid actions are available:
 
@@ -587,7 +636,7 @@ During readback, tool visibility ensures only valid actions are available:
 
 This prevents the LLM from "moving on" to the next question while values are still unconfirmed.
 
-### 7.5 Readback Stall Detection
+### 7.6 Readback Stall Detection
 
 A safety net for the case where the LLM fails to call `confirm_pending` or `reject_pending` despite pending values existing. This can happen when complex conversation context confuses the LLM into generating a response without using either readback tool.
 
@@ -620,15 +669,15 @@ A safety net for the case where the LLM fails to call `confirm_pending` or `reje
 - **`confirm_pending` and `reject_pending`** clear `_readback_stall` and `_retries["readback"]` on success, so successful readback cycles reset the stall detector completely.
 - **All setter tools** clear `_readback_stall` on success (writing to pending or filled). This is critical for inline corrections during readback — when the user says "actually, make it 6," the setter call proves the user is actively engaged, not that the LLM is stuck. Without this reset, the stall counter would accumulate across the initial setter, the user's correction message, and the correction setter, hitting the threshold of 3 and falsely rejecting the pending values.
 
-### 7.6 Global Progress Stall Detection
+### 7.7 Global Progress Stall Detection
 
-A broader safety net that catches **any** conversation making no forward progress — not just readback loops. The readback stall detector (Section 7.5) handles one specific failure mode; the progress stall detector is global.
+A broader safety net that catches **any** conversation making no forward progress — not just readback loops. The readback stall detector (Section 7.6) handles one specific failure mode; the progress stall detector is global.
 
 **The problem:** The LLM could loop on off-topic chat, repeat the same question without the user providing new info, or otherwise spin without advancing through the DAG. Without a global bound, these conversations run indefinitely.
 
 **How it works:**
 
-1. On each callback invocation, increment `sm["_progress_turns"]`.
+1. On each callback invocation where `last_user_text` is non-empty, increment `sm["_progress_turns"]`. Post-tool and post-preemption callbacks (where `last_user_text` is empty) do **not** increment the counter — only genuine user turns count toward the stall limit. Without this gate, auto-confirm preemption would add an extra count every time it fired, making the effective limit unreliable.
 2. When `_progress_turns >= max_turns` (default 8), the framework escalates via the `progress_stall` config (part of the config dict returned by `_get_config()`):
 
 ```python
@@ -650,7 +699,7 @@ The framework compares `filled` and `pending` against a snapshot from the prior 
 
 **Why 4 turns?** This is tight enough to catch the LLM going off the rails quickly — 4 consecutive turns with no slot fill, task fire, or readback action means the conversation is stuck. The counter resets on every meaningful state change, so normal flows (including corrections and brief off-topic detours) never approach this limit. Agents with more complex flows may increase this.
 
-**Relationship to readback stall:** The two detectors are independent. The readback stall fires at 3 cycles when pending is non-empty and no readback tool is called. The progress stall fires at 4 turns with no state change of any kind. A conversation can trigger the readback stall (which rejects pending, counting as a state change that resets the progress counter) without ever hitting the progress stall.
+**Relationship to readback stall:** The two detectors are independent. The readback stall fires at 3 cycles when pending is non-empty and no readback tool is called. The progress stall fires at 4 turns with no state change of any kind. A conversation can trigger the readback stall (which rejects pending, counting as a state change that resets the progress counter) without ever hitting the progress stall. See Section 7.6 for readback stall details.
 
 ---
 
@@ -670,7 +719,7 @@ The framework preempts the LLM in five situations:
 
 1. **Task fire**: A task executed and produced a result message (via `then_say`, `retry_say`, or `on_exhaust.say`). The message is delivered verbatim.
 2. **Slot validation error**: A setter tool signaled an error via `_slot_errors`, and `_handle_slot_errors()` resolved the message from the slot's `validation.errors` config. The error message is delivered verbatim.
-3. **Readback transition**: `confirm_pending` just committed values, and the DAG's next action is `next_question`. The message is delivered with a `"Wonderful! "` prefix for warmth.
+3. **Readback transition**: `confirm_pending` or auto-confirm just committed values, and the DAG's next action is `next_question`. The message is delivered with a randomly chosen prefix from `confirm_transition_prefix` (e.g. `"Wonderful!"`, `"Perfect!"`, `"Great!"`) for warmth.
 4. **Readback stall exhaustion**: The readback stall detector has rejected pending values too many times and ``readback_retry.on_exhaust`` fires. The escalation message is delivered verbatim.
 5. **Progress stall**: The global progress counter has exceeded ``progress_stall.max_turns`` with no forward progress. The escalation message is delivered verbatim.
 
@@ -763,6 +812,7 @@ When a non-terminal task succeeds and fills output slots, the framework immediat
 | Preventing invalid tool calls | Python | `_compute_hidden_tools` per turn — hides filled, inactive, and dependency-blocked setters |
 | Generating readback text | Python | `_build_readback` with configured formatters |
 | Confirming/rejecting readback | LLM | Calls `confirm_pending` / `reject_pending` based on user response |
+| Short-circuiting confirmation for clear affirmatives | Python | `_is_affirmative()` + auto-confirm block in `_run_slot_filling` — merges pending without LLM call |
 | Handling slot validation errors | Python | `_handle_slot_errors` resolves message from config, tracks retries |
 | Detecting readback stalls | Python | `_readback_stall` counter, reject-on-stall, retry via `readback_retry` config |
 | Validating task output shape | Python | Checks declared `outputs` keys are present in executor result |

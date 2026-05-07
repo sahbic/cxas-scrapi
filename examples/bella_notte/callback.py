@@ -14,7 +14,46 @@ latest values.
 """
 
 import datetime  # noqa: I001
+import random
 from typing import Any
+
+# ── Affirmative detection (used by auto-confirm) ──────────────────────────────
+
+_AFFIRMATIVES = frozenset({
+    "yes", "yeah", "yep", "yup", "yah", "ya",
+    "correct", "right",
+    "sure", "sounds good", "looks good",
+    "ok", "okay", "perfect", "great", "exactly",
+    "confirmed", "confirm",
+    "absolutely", "definitely", "certainly",
+    "that's right", "that is right",
+    "that's correct", "that is correct",
+    "looks right", "that looks right", "that sounds right",
+})
+
+_CORRECTION_SIGNALS = frozenset({
+    "but", "actually", "wait", "change", "different",
+    "instead", "not", "no", "wrong", "except", "however",
+    "although", "though",
+})
+
+
+_STRIP_PUNCT = str.maketrans("", "", ".,;:!?\"'")
+
+
+def _is_affirmative(text: str) -> bool:
+  """True if text is a short, pure affirmative with no correction signals."""
+  if not text:
+    return False
+  normalized = text.lower().strip().rstrip(".,!? ")
+  if normalized in _AFFIRMATIVES:
+    return True
+  # Strip punctuation from each word before comparing, so "Yes, that's
+  # correct" and "Yes." work the same as "Yes that's correct".
+  words = [w.translate(_STRIP_PUNCT) for w in normalized.split()]
+  if len(words) <= 5 and words and words[0] in _AFFIRMATIVES:
+    return not any(w in _CORRECTION_SIGNALS for w in words[1:])
+  return False
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -51,7 +90,8 @@ def _get_config() -> dict[str, Any]:
       return f"at {v}"
 
   def _fmt_party_size(v) -> str:
-    return f"{int(v)} guest{'s' if int(v) != 1 else ''}"
+    n = int(v)
+    return f"{n} guest{'s' if n != 1 else ''}"
 
   def _fmt_phone(v) -> str:
     return f"contact phone {v}"
@@ -260,8 +300,7 @@ def _get_config() -> dict[str, Any]:
               "source": "user",
               "setter": "set_special_requests",
               "ask": (
-                  "Do you have any special requests or dietary"
-                  " needs? Just say none if not."
+                  "Do you have any special requests or dietary needs?"
               ),
               "readback_fmt": _fmt_special_requests,
               "requires_readback": True,
@@ -316,7 +355,7 @@ def _get_config() -> dict[str, Any]:
               "success_check": "success",
               "terminal": True,
               "then_say": (
-                  "Wonderful! Your reservation is confirmed."
+                  "Your reservation is confirmed."
                   " Your confirmation number is"
                   " {confirmation_number}. We look forward to"
                   " welcoming you to Bella Notte!"
@@ -344,6 +383,13 @@ def _get_config() -> dict[str, Any]:
           "BookReservation": _exec_book,
       },
       "readback_tools": ["confirm_pending", "reject_pending"],
+      "confirm_transition_prefix": [
+          "Wonderful!",
+          "Perfect!",
+          "Great!",
+          "Excellent!",
+          "Lovely!",
+      ],
       "readback_retry": {
           "max_retries": 2,
           "on_exhaust": {
@@ -374,6 +420,36 @@ def _get_config() -> dict[str, Any]:
 # ═════════════════════════════════════════════════════════════════════
 
 
+def before_agent_callback(callback_context):
+  """CES before_agent_callback entry point — runs once per user turn.
+
+  Fires before static variable substitution, so state changes here are
+  visible when the instruction template is rendered.
+  """
+  sm = callback_context.state.get("sm", {})
+
+  # ── Deferred rejection ───────────────────────────────────────────
+  # reject_pending defers clearing pending until the next user turn so
+  # that the before_model_callback's stall detection doesn't see a
+  # state change and reset counters prematurely. Process it here.
+  if "_rejection_snapshot" in sm:
+    snapshot = sm.pop("_rejection_snapshot")
+    sm.pop("_rejection_requested", None)
+    sm["_progress_turns"] = 0
+    sm.pop("_readback_stall", None)
+    if sm.get("pending") == snapshot:
+      sm["pending"] = {}
+
+  # ── system_message phase ─────────────────────────────────────────
+  # When pending values exist, the user is responding to a readback
+  # question. Clear system_message so static substitution doesn't
+  # carry a stale collection-phase directive into this turn.
+  if sm.get("pending"):
+    callback_context.state["system_message"] = ""
+
+  return None
+
+
 def before_model_callback(callback_context, llm_request):
   """CES before_model_callback entry point — thin adapter.
 
@@ -396,14 +472,31 @@ def before_model_callback(callback_context, llm_request):
 
   config = _get_config()
   _validate_config(config)
-  result = _run_slot_filling(config, sm)
 
-  # Write the orchestrator's message to state so the LLM can read it
-  # via sm._system_message (per the slot_filling_protocol instruction).
-  if result.get("message"):
-    sm["_system_message"] = result["message"]
-  else:
-    sm.pop("_system_message", None)
+  # Extract last user text only when this is an initial-user-turn call
+  # (last content is role="user"). Post-tool callbacks have a function
+  # response as the last content — don't extract there, so auto-confirm
+  # never fires on a re-invocation after a tool result.
+  last_user_text = ""
+  if llm_request.contents:
+    last_content = llm_request.contents[-1]
+    if getattr(last_content, "role", "") == "user":
+      for part in getattr(last_content, "parts", []):
+        txt = getattr(part, "text", "")
+        if txt:
+          last_user_text = txt
+          break
+
+  result = _run_slot_filling(config, sm, last_user_text=last_user_text)
+
+  # Only update system_message when there's something meaningful to say
+  # (collection phase next-question, fresh readback directive, task fire,
+  # error, etc.). For the awaiting_confirmation phase (pending exists but
+  # not fresh), before_agent_callback already set the correct directive via
+  # static substitution — don't overwrite it with a stale readback message.
+  msg = result.get("message", "")
+  if msg:
+    callback_context.state["system_message"] = msg
 
   for tool_name in result.get("hide_tools", []):
     llm_request.config.hide_tool(tool_name)
@@ -415,7 +508,10 @@ def before_model_callback(callback_context, llm_request):
       and llm_request.contents
       and len(llm_request.contents) > 1):
     return LlmResponse.from_parts(  # noqa: F821  # pylint: disable=undefined-variable
-        parts=[Part.from_text(text=result["message"])])  # noqa: F821  # pylint: disable=undefined-variable
+        parts=[Part.from_text(  # noqa: F821  # pylint: disable=undefined-variable
+            text=result["message"]
+        )]
+    )
 
   return {"decision": "OK"}
 
@@ -423,15 +519,19 @@ def before_model_callback(callback_context, llm_request):
 def _run_slot_filling(
     config: dict[str, Any],
     sm: dict[str, Any],
+    last_user_text: str = "",
 ) -> dict[str, Any]:
   """Orchestrate one turn of slot filling. Mutates sm in place.
 
   Args:
     config: Slot filling configuration from _get_config().
     sm: Session state dict (callback_context.state["sm"]). Mutated in place.
+    last_user_text: The user's message text from the current turn (empty
+      when called after a tool result). Used for auto-confirm detection.
 
   Returns:
-    Action dict with keys "hide_tools", "preempt", and "message".
+    Dict with keys: "hide_tools", "preempt", "message" (raw text for
+    preemption and system_message state update).
   """
   slots = config["slots"]
   tasks = config["tasks"]
@@ -439,8 +539,18 @@ def _run_slot_filling(
   readback_tools = config["readback_tools"]
   readback_retry = config["readback_retry"]
   progress_stall = config["progress_stall"]
+  _prefix_cfg = config.get("confirm_transition_prefix", "")
+  if isinstance(_prefix_cfg, list):
+    confirm_transition_prefix = (
+        random.choice(_prefix_cfg) if _prefix_cfg else ""
+    )
+  else:
+    confirm_transition_prefix = _prefix_cfg
 
   slot_map = {s["name"]: s for s in slots}
+
+  sm["_invoke_n"] = sm.get("_invoke_n", 0) + 1
+  inv_n = sm["_invoke_n"]
 
   filled = sm.get("filled", {})
   pending = sm.get("pending", {})
@@ -469,7 +579,7 @@ def _run_slot_filling(
     if last_pending and not pending:
       retries.pop("readback", None)
 
-    _log_event(sm, "progress_detected")
+    _log_progress(sm, filled, pending, last_state)
 
   # ── Auto-promote: slots without readback go straight to filled ─
   # Setter tools always write to pending first. Slots that don't
@@ -478,8 +588,7 @@ def _run_slot_filling(
   readback_set = {
       s["name"] for s in slots if s.get("requires_readback")
   }
-  auto_promoted = [k for k in list(pending)
-                   if k not in readback_set]
+  auto_promoted = [k for k in pending if k not in readback_set]
   for name in auto_promoted:
     filled[name] = pending.pop(name)
 
@@ -520,11 +629,39 @@ def _run_slot_filling(
   last_pending = last_state.get("pending", {})
   fresh_pending = bool(pending) and not bool(last_pending)
 
+  # ── Phase snapshot ────────────────────────────────────────────
+  if pending:
+    phase = "fresh_readback" if fresh_pending else "awaiting_confirmation"
+  else:
+    phase = "collection"
+
+  # ── Auto-confirm ──────────────────────────────────────────────
+  # When the user sends a pure affirmative ("yes", "correct", etc.)
+  # during awaiting_confirmation, merge pending → filled directly
+  # instead of relying on the LLM to call confirm_pending. This makes
+  # the confirmation transition 100% deterministic. Only fires on the
+  # initial user-turn callback (last_user_text is empty after tool
+  # results, so this never double-fires within the same turn).
+  if (phase == "awaiting_confirmation"
+      and last_user_text
+      and _is_affirmative(last_user_text)):
+    filled.update(pending)
+    sm["filled"] = filled
+    sm["pending"] = {}
+    pending = {}
+    sm["_readback_transition"] = True
+    sm["_progress_turns"] = 0   # confirmation = progress; reset stall
+    sm.pop("_readback_stall", None)
+    phase = "collection"
+    fresh_pending = False
+    _log_event(sm, "auto_confirm", user_msg=last_user_text)
+
   # ── Tool visibility ───────────────────────────────────────────
   hide_tools = _compute_hidden_tools(
       slots, filled, pending, readback_tools, slot_map,
       fresh_pending=fresh_pending,
   )
+
   # ── Slot error handling ───────────────────────────────────────
   # Setter tools write errors to sm["_slot_errors"] (e.g.,
   # out_of_range, parse_error). We consume them here and preempt
@@ -532,7 +669,8 @@ def _run_slot_filling(
   # its own error text.
   error_msg, _ = _handle_slot_errors(sm, slots)
   if error_msg:
-    _log_event(sm, "preempt", trigger="slot_error")
+    _log_invoke(sm, inv_n, phase, filled, pending, fresh_pending, hide_tools,
+                preempted=error_msg)
     return {
         "hide_tools": hide_tools,
         "preempt": True,
@@ -551,7 +689,13 @@ def _run_slot_filling(
   # confirm (no state change for 3 consecutive callback invocations),
   # clear pending and retry the readback. After max_retries failed
   # readback cycles, escalate.
-  if pending and not readback_transition:
+  #
+  # Skip when reject_pending was called this turn (_rejection_snapshot
+  # present). reject_pending is deferred — it doesn't clear pending
+  # immediately — so without this guard the stall counter keeps running
+  # even though the user actively said "no". The snapshot signals that
+  # the rejection will be resolved at the start of the next turn.
+  if pending and not readback_transition and "_rejection_snapshot" not in sm:
     stall = sm.get("_readback_stall", 0) + 1
     sm["_readback_stall"] = stall
     if stall >= 3:
@@ -560,15 +704,15 @@ def _run_slot_filling(
       sm.pop("_readback_stall", None)
       retries = sm.setdefault("_retries", {})
       retries["readback"] = retries.get("readback", 0) + 1
-      _log_event(sm, "stall_detected",
-                 retries=retries["readback"])
+      _log_event(sm, "readback_stall", retries=retries["readback"])
       max_rb = readback_retry.get("max_retries", 2)
       if retries["readback"] >= max_rb:
         exhaust = readback_retry.get("on_exhaust", {})
         if exhaust.get("then") == "escalate":
           sm["status"] = "escalated"
         msg = exhaust.get("say", "Please call us for help.")
-        _log_event(sm, "preempt", trigger="stall_exhaust")
+        _log_invoke(sm, inv_n, "readback_stall", filled, {}, False, hide_tools,
+                    preempted=msg)
         return {
             "hide_tools": hide_tools,
             "preempt": True,
@@ -576,11 +720,15 @@ def _run_slot_filling(
         }
 
   # ── Progress stall detection ──────────────────────────────────
-  # Counts invocations without any state change. Catches cases
-  # like repeated off-topic messages where the user never provides
-  # useful input. Resets to 0 whenever state changes (above).
-  progress = sm.get("_progress_turns", 0) + 1
-  sm["_progress_turns"] = progress
+  # Counts user turns without any actionable progress. Gate on
+  # last_user_text so post-tool and post-preemption callbacks
+  # (where last_user_text is empty) don't inflate the count.
+  # Resets to 0 whenever state changes (above) or auto-confirm fires.
+  if last_user_text:
+    progress = sm.get("_progress_turns", 0) + 1
+    sm["_progress_turns"] = progress
+  else:
+    progress = sm.get("_progress_turns", 0)
   max_turns = progress_stall.get("max_turns", 8)
   if progress >= max_turns:
     _log_event(sm, "progress_stall", turns=progress)
@@ -588,7 +736,8 @@ def _run_slot_filling(
     if exhaust.get("then") == "escalate":
       sm["status"] = "escalated"
     msg = exhaust.get("say", "Please call us for help.")
-    _log_event(sm, "preempt", trigger="progress_stall")
+    _log_invoke(sm, inv_n, "progress_stall", filled, pending, fresh_pending,
+                hide_tools, preempted=msg)
     return {
         "hide_tools": hide_tools,
         "preempt": True,
@@ -599,28 +748,55 @@ def _run_slot_filling(
   dag_result = _compute_dag_state(
       tasks, slots, filled, pending, task_results, slot_map,
   )
-  _log_event(sm, "dag_action", action=dag_result["action"],
-             task=dag_result.get("task"))
 
   # ── Execute the action ────────────────────────────────────────
   msg = _execute_dag_step(
       sm, dag_result, executors, tasks, slots, slot_map,
   )
 
+  # Re-save _last_state to include any task outputs. Without this, task-filled
+  # slots appear as stale "progress task+" events on the next invocation even
+  # though they were already captured in the fired entry above.
+  sm["_last_state"] = {"filled": dict(filled), "pending": dict(pending)}
+
+  # For awaiting_confirmation (pending exists, not fresh), the system_message
+  # was already set by before_agent_callback via static substitution. Return
+  # empty so we don't overwrite it with the stale readback directive.
+  if dag_result["action"] == "awaiting_readback" and not fresh_pending:
+    msg = ""
+
   # Preempt when a task fires — the framework controls the exact
   # message (with values from the executor result) so the LLM
   # doesn't hallucinate different values.
   preempt = False
   if dag_result["action"] == "fire" and msg:
-    _log_event(sm, "preempt", trigger="task_fire")
     preempt = True
 
   # After user confirms a readback, bridge to the next question
-  # with "Wonderful!" for a natural transition.
-  if readback_transition and msg and not preempt:
-    _log_event(sm, "preempt", trigger="readback_transition")
-    msg = f"Wonderful! {msg}"
-    preempt = True
+  # with "Wonderful!" for a natural transition. Apply even when a
+  # task fires on the same turn (preempt already True) — without
+  # this, confirm → task-fire skips the warm opener entirely.
+  if readback_transition and msg and confirm_transition_prefix:
+    if not msg.lower().startswith(confirm_transition_prefix.lower()):
+      msg = f"{confirm_transition_prefix} {msg}"
+    if not preempt:
+      preempt = True
+
+  # ── Single compact log entry per invocation ───────────────────
+  action = dag_result["action"]
+  if preempt:
+    _log_invoke(sm, inv_n, phase, filled, pending, fresh_pending, hide_tools,
+                preempted=msg, fired=dag_result.get("task_name"))
+  elif action == "next_question":
+    _log_invoke(sm, inv_n, phase, filled, pending, fresh_pending, hide_tools,
+                asking=msg or dag_result.get("system_message", ""))
+  elif action == "awaiting_readback" and fresh_pending:
+    _log_invoke(sm, inv_n, phase, filled, pending, fresh_pending, hide_tools,
+                reading_back=dag_result.get("system_message", ""))
+  else:
+    # awaiting_confirmation (phase label is self-explanatory) or all_done
+    _log_invoke(sm, inv_n, phase, filled, pending, fresh_pending, hide_tools,
+                done=(action == "all_done"))
 
   return {
       "hide_tools": hide_tools,
@@ -715,12 +891,115 @@ def _validate_config(config):
         )
 
 
-def _log_event(sm, event, **data):
-  """Append a debug event to sm["_debug_log"]. Capped at 20."""
+def _log_raw(sm, entry):
+  """Append a raw dict to sm["_debug_log"]. Capped at 50 entries."""
   log = sm.setdefault("_debug_log", [])
-  log.append({"event": event, **data})
-  if len(log) > 20:
-    del log[:-20]
+  log.append(entry)
+  if len(log) > 50:
+    del log[:-50]
+
+
+def _log_event(sm, event, **data):
+  """Append a named event to sm["_debug_log"]."""
+  _log_raw(sm, {"event": event, **data})
+
+
+def _log_progress(sm, filled, pending, last_state):
+  """Log slot state changes caused by tool calls.
+
+  Skips session-init noise (old state = {}, new state = {f:{}, p:{}}).
+  Only emits when a setter, confirm_pending, or task actually changed something.
+
+  Args:
+    sm: slot machine state dict.
+    filled: current filled slots dict.
+    pending: current pending slots dict.
+    last_state: snapshot dict with "filled" and "pending" from prior state.
+  """
+  last_filled = last_state.get("filled", {})
+  last_pending = last_state.get("pending", {})
+  # Items that moved from pending → filled (confirm_pending called)
+  confirmed = sorted(
+      k for k in set(last_pending) if k in filled and k not in last_filled
+  )
+  # Items added to filled not via confirmation (task output, auto-promote)
+  task_out = {
+      k: filled[k]
+      for k in set(filled) - set(last_filled) - set(confirmed)
+  }
+  # New items in pending (setter tool called)
+  new_pending = {k: pending[k] for k in set(pending) - set(last_pending)}
+  # Items removed from pending without being confirmed (reject_pending)
+  rejected = sorted(
+      k for k in set(last_pending) if k not in pending and k not in filled
+  )
+  if not (confirmed or task_out or new_pending or rejected):
+    return
+  entry = {"event": "progress"}
+  if new_pending:
+    entry["pending+"] = new_pending
+  if confirmed:
+    entry["confirmed"] = confirmed
+  if task_out:
+    entry["task+"] = task_out
+  if rejected:
+    entry["rejected"] = rejected
+  _log_raw(sm, entry)
+
+
+def _log_invoke(sm, n, phase, filled, pending, fresh_pending, hidden, *,
+                asking=None, reading_back=None, fired=None, done=False,
+                preempted=None):
+  """Emit one compact entry per callback invocation.
+
+  All per-invocation info — phase, slot state, tool visibility, and the
+  action taken — in a single dict. Use keyword args for the action type;
+  they are mutually exclusive.
+
+  Args:
+    sm: slot machine state dict.
+    n: monotonically increasing invocation counter.
+    phase: current orchestration phase string.
+    filled: current filled slots dict.
+    pending: current pending slots dict.
+    fresh_pending: True if pending values appeared this invocation.
+    hidden: set of tool names hidden from the model this turn.
+    asking: system_message guiding the model to ask the next question.
+    reading_back: system_message guiding the model to read back pending values.
+    fired: task name when the framework fired a DAG task.
+    done: True when all slots are filled and booking is complete.
+    preempted: exact text the framework sent to the user (bypassing model).
+  """
+  e = {"#": n, "phase": phase}
+  if filled:
+    e["filled"] = dict(filled)
+  if pending:
+    e["pending"] = dict(pending)
+  if fresh_pending:
+    e["fresh"] = True
+  if hidden:
+    e["hidden"] = sorted(hidden)
+  if asking is not None:
+    e["asking"] = asking[:120]
+  if reading_back is not None:
+    e["reading_back"] = reading_back[:120]
+  if fired is not None:
+    e["fired"] = fired
+  if done:
+    e["done"] = True
+  if preempted is not None:
+    e["preempted"] = preempted[:120]
+  # Suppress consecutive identical entries (e.g. pre-tool re-invocations
+  # with no state change — the greeting turn and turn-start look the same).
+  log = sm.setdefault("_debug_log", [])
+  last_invoke = next((x for x in reversed(log) if "#" in x), None)
+  if last_invoke:
+    if ({k: v for k, v in last_invoke.items() if k != "#"} ==
+        {k: v for k, v in e.items() if k != "#"}):
+      return
+  log.append(e)
+  if len(log) > 50:
+    del log[:-50]
 
 
 def _is_slot_active(slot_def, filled):
@@ -746,6 +1025,7 @@ def _is_slot_active(slot_def, filled):
 
 
 def _is_task_active(task_def, filled):
+  """Check whether a conditional task is active given current filled values."""
   condition = task_def.get("condition")
   if condition is None:
     return True
@@ -765,7 +1045,17 @@ def _resolve_formatter(fmt):
 
 
 def _build_readback(slots, pending, filled):
-  """Build readback message from pending slot values."""
+  """Build the readback action dict for pending slot values.
+
+  Args:
+    slots: list of slot definition dicts.
+    pending: current pending slots dict.
+    filled: current filled slots dict.
+
+  Returns:
+    Dict with "action" and "system_message" keys, or None if no active
+    pending slots exist.
+  """
   fragments = []
   for slot_def in slots:
     name = slot_def["name"]
@@ -783,9 +1073,7 @@ def _build_readback(slots, pending, filled):
   summary = ", ".join(fragments)
   return {
       "action": "awaiting_readback",
-      "system_message": (
-          f"Just to confirm — {summary}. Is that correct?"
-      ),
+      "system_message": f"Just to confirm — {summary}. Is that correct?",
   }
 
 
@@ -806,7 +1094,7 @@ def _find_next_question(slots, filled, pending, slot_map):
     slot_map: Dict mapping slot names to their definitions.
 
   Returns:
-    Action dict with "action" and "system_message" keys.
+    Action dict with "action" and "message" keys.
   """
   for slot_def in slots:
     name = slot_def["name"]
@@ -856,9 +1144,9 @@ def _compute_dag_state(
     Action dict describing the next step (readback, fire, question, or done).
   """
   if pending:
-    readback = _build_readback(slots, pending, filled)
-    if readback is not None:
-      return readback
+    rb = _build_readback(slots, pending, filled)
+    if rb is not None:
+      return rb
 
   for task in tasks:
     task_name = task["name"]
@@ -971,7 +1259,7 @@ def _execute_dag_step(
   task_results = sm.get("task_results", {})
 
   if action in ("awaiting_readback", "next_question", "all_done"):
-    return dag_result["system_message"]
+    return dag_result.get("system_message", "")
 
   # Cascading loop: after a task fires successfully, re-evaluate the
   # DAG — its outputs may satisfy another task's inputs. This avoids
@@ -984,7 +1272,7 @@ def _execute_dag_step(
     try:
       result = executor(filled)
     except Exception:  # pylint: disable=broad-except
-      _log_event(sm, "task_exception", task=task_name)
+      _log_event(sm, "task", name=task_name, ok=False, error="exception")
       result = {success_key: False}
 
     is_success = result.get(success_key)
@@ -994,8 +1282,7 @@ def _execute_dag_step(
       if any(k not in result for k in outputs):
         is_success = False
 
-    _log_event(sm, "task_fire", task=task_name,
-               success=bool(is_success))
+    _log_event(sm, "task", name=task_name, ok=bool(is_success))
 
     if is_success:
       task_results[task_name] = result
@@ -1034,7 +1321,7 @@ def _execute_dag_step(
       exhaust = on_failure.get("on_exhaust", {})
       if exhaust.get("then") == "escalate":
         sm["status"] = "escalated"
-      _log_event(sm, "task_exhaust", task=task_name)
+      _log_event(sm, "task_exhaust", name=task_name)
       msg = exhaust.get("say", "An error occurred.")
       return msg
 
@@ -1055,10 +1342,12 @@ def _compute_hidden_tools(
   at the wrong time — more reliable than instruction-only guardrails.
 
   Two modes:
-  - pending exists: readback phase — hide all setters (except the
-    one being corrected), show confirm/reject. But if pending is
-    fresh (setter just ran this turn), ALSO hide confirm/reject to
-    force the LLM to read back values before confirming.
+  - pending exists: readback phase — show confirm/reject and all
+    setters for unfilled active slots whose deps are met (same rules
+    as collection). This allows corrections (calling a setter to
+    overwrite a pending value) and additions (setting a new slot the
+    user volunteers). If pending is fresh (setter just ran this turn),
+    hide confirm/reject to force the LLM to read back first.
   - no pending: collection phase — hide confirm/reject, show only
     setters for unfilled active slots whose deps are met.
 
@@ -1077,29 +1366,28 @@ def _compute_hidden_tools(
   if pending:
     if fresh_pending:
       hidden.extend(readback_tools)
-    for slot_def in slots:
-      setter = slot_def.get("setter")
-      if setter:
-        name = slot_def["name"]
-        if not _is_slot_active(slot_def, filled):
-          hidden.append(setter)
-        elif name not in pending:
-          hidden.append(setter)
   else:
     hidden.extend(readback_tools)
-    for slot_def in slots:
-      setter = slot_def.get("setter")
-      if not setter:
-        continue
-      name = slot_def["name"]
-      if not _is_slot_active(slot_def, filled):
-        hidden.append(setter)
-      elif name in filled:
-        hidden.append(setter)
-      elif not all(
-          r in filled
-          or not _is_slot_active(slot_map[r], filled)
-          for r in slot_def.get("requires", [])
-      ):
-        hidden.append(setter)
+  # Same setter visibility rules for both readback and collection:
+  # hide inactive, filled, or deps-not-met. During fresh_pending (setter
+  # just ran), also hide the setter for any slot already in pending —
+  # preventing the LLM from re-calling the same setter and accidentally
+  # skipping the readback step.
+  for slot_def in slots:
+    setter = slot_def.get("setter")
+    if not setter:
+      continue
+    name = slot_def["name"]
+    if not _is_slot_active(slot_def, filled):
+      hidden.append(setter)
+    elif name in filled:
+      hidden.append(setter)
+    elif name in pending and fresh_pending:
+      hidden.append(setter)
+    elif not all(
+        r in filled
+        or not _is_slot_active(slot_map[r], filled)
+        for r in slot_def.get("requires", [])
+    ):
+      hidden.append(setter)
   return hidden
