@@ -229,7 +229,7 @@ def test_reset_registry():
         importlib.reload(mod)
 
     registry_restored = build_registry()
-    assert len(registry_restored.all_rules()) == 63  # noqa: PLR2004
+    assert len(registry_restored.all_rules()) == 62  # noqa: PLR2004
 
 
 # ── LintConfig ───────────────────────────────────────────────────────────
@@ -469,7 +469,7 @@ def test_discovery_tool_callbacks(tmp_path):
 def test_build_registry_all_rules():
     registry = build_registry()
     all_rules = registry.all_rules()
-    assert len(all_rules) == 63  # noqa: PLR2004
+    assert len(all_rules) == 62  # noqa: PLR2004
 
 
 def test_build_context(tmp_path):
