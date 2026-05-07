@@ -92,6 +92,30 @@ CXAS SCRAPI is a high-level Python library and CLI that wraps the official `goog
 
     [Insights Guide →](guides/insights/index.md)
 
+-   :material-book-open-page-variant: **Design Guide**
+
+    ---
+
+    Battle-tested patterns for instruction design, agent architecture, tool design, error handling, and callbacks — distilled from production agents.
+
+    [Design Guide →](design-guide/index.md)
+
+-   :material-puzzle: **Patterns**
+
+    ---
+
+    Reusable architectural patterns for CXAS agents: the Slot Filling (Slot Machine) pattern, dynamic prompting, and self-healing error recovery.
+
+    [Patterns →](patterns/index.md)
+
+-   :material-school: **Tutorials**
+
+    ---
+
+    Build a complete restaurant reservation agent end-to-end. Covers slots, DAG orchestration, callbacks, evaluations, and iterative stabilization.
+
+    [Tutorials →](tutorials/index.md)
+
 </div>
 
 ---
@@ -131,5 +155,21 @@ CXAS SCRAPI is a high-level Python library and CLI that wraps the official `goog
     Step-by-step walkthroughs for evaluations, linting, CI/CD, branching, and more.
 
     [Guides →](guides/index.md)
+
+-   :material-book-open-page-variant: **Learning best practices?**
+
+    ---
+
+    Instruction design, architecture decisions, tool patterns, error handling — the Design Guide has it all.
+
+    [Design Guide →](design-guide/index.md)
+
+-   :material-puzzle: **Need a reusable pattern?**
+
+    ---
+
+    The Slot Machine pattern, dynamic prompting, self-healing errors, and more.
+
+    [Patterns →](patterns/index.md)
 
 </div>

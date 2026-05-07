@@ -146,6 +146,22 @@ nav:
     - Quick Start (Python): getting-started/quickstart-python.md
     - Quick Start (CLI): getting-started/quickstart-cli.md
     - Concepts: getting-started/concepts.md
+  - Design Guide:
+    - design-guide/index.md
+    - Instruction Design: design-guide/instruction-design.md
+    - Agent Architecture: design-guide/agent-architecture.md
+    - Tool Design: design-guide/tool-design.md
+    - Error Handling: design-guide/error-handling.md
+    - Variables & State: design-guide/variables.md
+    - Callbacks: design-guide/callbacks.md
+  - Patterns:
+    - patterns/index.md
+    - Slot Filling: patterns/slot-filling.md
+    - Dynamic Prompting: patterns/dynamic-prompting.md
+    - Self-Healing Errors: patterns/self-healing.md
+  - Tutorials:
+    - tutorials/index.md
+    - Restaurant Reservation: tutorials/restaurant-reservation.md
   - Guides:
     - guides/index.md
     - Agent Development:
