@@ -398,6 +398,146 @@ expectations:
 
 ---
 
+## Multilingual Eval Patterns
+
+Use these patterns for any agent with multi-language support. The key distinction: **explicit language switch = golden** (deterministic), **auto-detect reliability = sim** (non-deterministic by nature).
+
+### Golden: Explicit Language Switch
+
+Tests the happy path: user explicitly requests a language and the agent calls `update_language` before responding.
+
+```yaml
+conversations:
+  - conversation: explicit_switch_english_to_german
+    session_parameters:
+      active_language: "English"
+    turns:
+      - user: "<event>welcome</event>"
+        agent: "Hello, how can I help you today?"
+      - user: "Can you speak German please?"
+        agent: "Natürlich, wie kann ich Ihnen helfen?"
+        tool_calls:
+          - action: update_language
+            args:
+              new_language: "German"
+      - user: "Ich möchte mein Konto überprüfen."
+        agent: "Gerne helfe ich Ihnen dabei."
+    expectations:
+      - "The agent must call update_language before its first response in German."
+      - "The agent must respond in German for all turns after the switch."
+      - "The agent must NOT revert to English unless the user explicitly requests it."
+    tags: [P0, multilingual, explicit-switch]
+
+  - conversation: explicit_switch_back_to_english
+    session_parameters:
+      active_language: "German"
+    turns:
+      - user: "<event>welcome</event>"
+        agent: "Hallo, wie kann ich Ihnen helfen?"
+      - user: "English please."
+        agent: "Of course, how can I help you?"
+        tool_calls:
+          - action: update_language
+            args:
+              new_language: "English"
+    expectations:
+      - "The agent must call update_language when the user switches back to English."
+      - "The agent must respond in English after the switch."
+    tags: [P0, multilingual, explicit-switch]
+```
+
+### Golden: Language Guardrails (Stay in Current Language)
+
+Tests that the agent does NOT switch on ambiguous or short utterances.
+
+```yaml
+conversations:
+  - conversation: guardrail_single_word_stays
+    session_parameters:
+      active_language: "English"
+    turns:
+      - user: "<event>welcome</event>"
+        agent: "Hello, how can I help you today?"
+      - user: "I need help with my bill. Danke."
+        agent: "Of course, I'd be happy to help with your bill."
+    expectations:
+      - "The agent must NOT call update_language."
+      - "The agent must stay in English despite the isolated German word 'danke'."
+    tags: [P0, multilingual, guardrail]
+
+  - conversation: guardrail_cognate_stays
+    session_parameters:
+      active_language: "English"
+    turns:
+      - user: "<event>welcome</event>"
+        agent: "Hello, how can I help you today?"
+      - user: "No."
+        agent: "I understand. Is there anything else I can help you with?"
+    expectations:
+      - "The agent must NOT call update_language."
+      - "The agent must stay in English for short ambiguous utterances."
+    tags: [P0, multilingual, guardrail]
+```
+
+### Simulation: Language Switch Reliability (Auto-Detect)
+
+Use a sim for auto-detect stress testing — agent phrasing and detection vary. Run with high parallelism to surface intermittent failures.
+
+```yaml
+- name: multilingual_explicit_switch_stress
+  tags: [P0, multilingual]
+  steps:
+    - goal: Start in English, explicitly switch to German, then explicitly switch back to English
+      success_criteria: Agent responds in the correct language in every phase without reverting
+      response_guide: "Start in English asking about account balance. After the agent responds, say 'Können Sie auf Deutsch antworten?' to switch to German. After 2 German turns, say 'English please.' to switch back."
+      max_turns: 14
+  expectations:
+    - "The agent must call update_language exactly twice — once when switching to German and once when switching back to English."
+    - "The agent must respond in German after the first switch."
+    - "The agent must respond in English after the second switch."
+    - "The agent must NOT switch language spontaneously without the user requesting it."
+
+- name: multilingual_guardrail_stress
+  tags: [P1, multilingual]
+  steps:
+    - goal: Attempt to confuse the agent with mixed-language sentences and short ambiguous utterances
+      success_criteria: Agent stays in English throughout without calling update_language
+      response_guide: "Conduct the conversation in English but pepper responses with isolated German words: 'danke', 'ja', 'nein', 'bitte'. Use mixed sentences like 'My account number? Keine Ahnung.' Do NOT explicitly ask to switch."
+      max_turns: 10
+  expectations:
+    - "The agent must NOT call update_language at any point."
+    - "The agent must respond in English throughout."
+    - "The agent must NOT switch languages based on isolated foreign words in otherwise English sentences."
+```
+
+### Tool Test: `update_language`
+
+```yaml
+- test: update_language_sets_active_language_german
+  tool: update_language
+  input:
+    new_language: "German"
+  expectations:
+    - key: success
+      value: true
+    - key: active_language
+      value: "German"
+    - key: agent_action
+      value: "Continue the entire conversation in German."
+
+- test: update_language_sets_active_language_english
+  tool: update_language
+  input:
+    new_language: "English"
+  expectations:
+    - key: success
+      value: true
+    - key: active_language
+      value: "English"
+```
+
+---
+
 ## Customer Profile Management
 
 Evals need mock customer profiles for session parameters. When creating evals:
