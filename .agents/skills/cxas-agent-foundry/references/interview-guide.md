@@ -17,6 +17,11 @@
    - **Text**: `gemini-3-flash` (text-only, lower latency)
 3. **Requirements source** -- Ask for the PRD, spec doc, or requirements. Can be a file path, URL, or pasted text. If they don't have a formal doc, interview them to build one.
 4. **Existing resources** -- Do they have sample conversations, mock data, customer profiles, or an existing agent to reference?
+5. **Multilingual requirements** -- Does this agent need to support more than one language?
+   - **Which languages?** (e.g., English + German, English + Spanish)
+   - **Switching mode:** Should switching be **explicit-only** (user must say "speak German") or **auto-detected** (agent detects from utterance)? **Default to explicit-only** -- auto-detection is non-deterministic on `gemini-3.1-flash-live` and is not recommended for production (b/484305525).
+   - **Datastore language:** Is the knowledge base / datastore in a different language than the agent instructions? If yes, the translate-around-tool-calls pattern is required (see `references/gecx-design-guide.md` → Multilingual Agents).
+   - **Voice persona:** Is there a specific approved voice? Non-default voices have a known issue where additional languages revert to the default voice. Re-saving app voice settings in the Console fixes this (see `references/gecx-design-guide.md` → Voice / Audio).
 
 ## Round 2: Write the Technical Design Document (TDD)
 
