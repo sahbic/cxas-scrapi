@@ -17,14 +17,17 @@
 import glob
 import json
 import os
+import time
 from datetime import datetime
 from typing import Any, Dict, List
 
 import pandas as pd
 import yaml
+from google.cloud.ces_v1beta.types import (
+    RunEvaluationOperationMetadata,
+)
 from jinja2 import Template
 
-from cxas_scrapi.cli.main import wait_for_evaluation_completion
 from cxas_scrapi.core.evaluations import Evaluations
 from cxas_scrapi.core.tools import Tools
 from cxas_scrapi.evals.callback_evals import CallbackEvals
@@ -1254,21 +1257,23 @@ def load_callback_test_results(csv_or_json_path):
 
 
 def generate_combined_report_from_dir(
-    evals_dir,
+    output_dir,
     golden_run=None,
     app_name=None,
     output_path=None,
     run=False,
     app_dir=None,
     tool_test_file=None,
-    golden_file=None,
+    goldens_dir=None,
     simulation_dir=None,
     format="html",
     include=None,
+    modality="text",
+    runs=1,
 ):
     """Load results from directory and generate combined HTML report."""
-    if not os.path.isdir(evals_dir):
-        raise ValueError(f"{evals_dir} is not a directory.")
+    if not os.path.isdir(output_dir):
+        raise ValueError(f"{output_dir} is not a directory.")
 
     if include is None or "all" in include:
         include = ["sims", "goldens", "scenarios"]
@@ -1283,9 +1288,11 @@ def generate_combined_report_from_dir(
             app_name=app_name,
             app_dir=app_dir,
             tool_test_file=tool_test_file,
-            golden_file=golden_file,
+            goldens_dir=goldens_dir,
             simulation_dir=simulation_dir,
-            evals_dir=evals_dir,
+            output_dir=output_dir,
+            modality=modality,
+            runs=runs,
         )
         sim_results = run_results["simulation"] if "sims" in include else []
         # Map tool results to expected format if needed
@@ -1319,20 +1326,22 @@ def generate_combined_report_from_dir(
     else:
         sim_files = []
         if "sims" in include:
-            sim_files = glob.glob(os.path.join(evals_dir, "sim_results*.json"))
+            sim_files = glob.glob(os.path.join(output_dir, "sim_results*.json"))
 
         tool_files = []
         callback_files = []
         if "scenarios" in include:
-            tool_files = glob.glob(os.path.join(evals_dir, "tool_results*.csv"))
+            tool_files = glob.glob(
+                os.path.join(output_dir, "tool_results*.csv")
+            )
             tool_files.extend(
-                glob.glob(os.path.join(evals_dir, "tool_results*.json"))
+                glob.glob(os.path.join(output_dir, "tool_results*.json"))
             )
             callback_files = glob.glob(
-                os.path.join(evals_dir, "callback_results*.csv")
+                os.path.join(output_dir, "callback_results*.csv")
             )
             callback_files.extend(
-                glob.glob(os.path.join(evals_dir, "callback_results*.json"))
+                glob.glob(os.path.join(output_dir, "callback_results*.json"))
             )
 
         if sim_files:
@@ -1396,7 +1405,7 @@ def generate_combined_report_from_dir(
             )
 
     if not output_path:
-        output_path = os.path.join(evals_dir, "combined_report.html")
+        output_path = os.path.join(output_dir, "combined_report.html")
 
     return generate_combined_html_report(
         golden_results=golden_results,
@@ -1405,6 +1414,8 @@ def generate_combined_report_from_dir(
         callback_results=callback_results,
         output_path=output_path,
         app_name=app_name or "",
+        golden_modality=modality,
+        sim_modality=modality,
     )
 
 
@@ -1412,12 +1423,62 @@ def run_all_evals(
     app_name,
     app_dir=None,
     tool_test_file=None,
-    golden_file=None,
+    goldens_dir=None,
     simulation_dir=None,
-    evals_dir=None,
+    output_dir=None,
+    modality="text",
+    runs=1,
 ):
     """Runs all 4 types of evaluations and returns aggregated results."""
     results = {"callback": [], "tool": [], "golden": [], "simulation": []}
+
+    # 3. Platform goldens (Trigger async)
+    evaluations_to_run = []
+    run_name = None
+    if not goldens_dir:
+        goldens_dir = "evals/goldens/"
+    if app_name and os.path.exists(goldens_dir):
+        eval_client = Evaluations(app_name=app_name)
+        eval_utils = EvalUtils(app_name=app_name)
+
+        if os.path.isdir(goldens_dir):
+            golden_files = glob.glob(os.path.join(goldens_dir, "*.yaml"))
+            print(f"Found {len(golden_files)} golden files in {goldens_dir}")
+        else:
+            golden_files = [goldens_dir]
+
+        for gf in golden_files:
+            print(f"Pushing golden file {gf}")
+            evals = eval_utils.load_golden_evals_from_yaml(gf)
+            for eval_dict in evals:
+                res = eval_client.update_evaluation(
+                    evaluation=eval_dict, app_name=app_name
+                )
+                evaluations_to_run.append(res.name)
+
+        if evaluations_to_run:
+            print(f"Running evaluations: {evaluations_to_run}")
+            operation = eval_client.run_evaluation(
+                evaluations=evaluations_to_run,
+                app_name=app_name,
+                modality=modality,
+                run_count=runs,
+            )
+
+            print(
+                "  Waiting for evaluation run name to appear in operation "
+                "metadata..."
+            )
+            for i in range(12):
+                time.sleep(10)
+                refreshed = operation._refresh(None)
+                meta = RunEvaluationOperationMetadata()
+                meta._pb.ParseFromString(refreshed.metadata.value)
+                if meta.evaluation_run:
+                    run_name = meta.evaluation_run
+                    print(f"  Run name resolved: {run_name}")
+                    break
+                print(f"  Waiting... ({(i+1)*10}s)")
 
     # 1. Callback tests
     if not app_dir and app_name:
@@ -1427,65 +1488,47 @@ def run_all_evals(
         callback_evals = CallbackEvals()
         df = callback_evals.test_all_callbacks_in_app_dir(app_dir=app_dir)
         results["callback"] = df.to_dict(orient="records")
-        if evals_dir:
+        if output_dir:
             df.to_csv(
-                os.path.join(evals_dir, "callback_results.csv"), index=False
+                os.path.join(output_dir, "callback_results.csv"), index=False
             )
 
     # 2. Tool tests
     if not tool_test_file:
-        tool_test_file = "evals/tool_tests/order_tests.yaml"
+        tool_test_file = "evals/tool_tests/"
     if app_name and os.path.exists(tool_test_file):
-        print(f"Running tool tests with {tool_test_file}")
         tool_evals = ToolEvals(app_name=app_name)
-        test_cases = tool_evals.load_tool_test_cases_from_file(tool_test_file)
-        df = tool_evals.run_tool_tests(test_cases)
-        results["tool"] = df.to_dict(orient="records")
-        if evals_dir:
-            df.to_csv(os.path.join(evals_dir, "tool_results.csv"), index=False)
 
-    # 3. Platform goldens
-    if not golden_file:
-        golden_file = "evals/goldens/order_lookup.yaml"
-    if app_name and os.path.exists(golden_file):
-        print(f"Running platform goldens with {golden_file}")
-        eval_client = Evaluations(app_name=app_name)
-        eval_utils = EvalUtils(app_name=app_name)
-
-        df_initial = eval_utils.evals_to_dataframe().get(
-            "summary", pd.DataFrame()
-        )
-        old_result_ids = set()
-        if not df_initial.empty and "eval_result_id" in df_initial.columns:
-            old_result_ids = set(df_initial["eval_result_id"].unique())
-
-        print(f"Pushing golden file {golden_file}")
-        eval_client.push_evaluation(file_path=golden_file, app_name=app_name)
-
-        prefix = os.path.splitext(os.path.basename(golden_file))[0]
-        all_evals = eval_client.list_evaluations(app_name=app_name)
-        evaluations_to_run = [
-            e.name for e in all_evals if e.display_name.startswith(prefix)
-        ]
-
-        if evaluations_to_run:
-            print(f"Running evaluations: {evaluations_to_run}")
-            eval_client.run_evaluation(
-                evaluations=evaluations_to_run, app_name=app_name
+        if os.path.isdir(tool_test_file):
+            tool_files = glob.glob(os.path.join(tool_test_file, "*.yaml"))
+            print(
+                f"Found {len(tool_files)} tool test files in {tool_test_file}"
             )
-            df_new_run = wait_for_evaluation_completion(
-                eval_utils,
-                old_result_ids,
-                app_name,
-                expected_count=len(evaluations_to_run),
-            )
-            if not df_new_run.empty and "eval_result_id" in df_new_run.columns:
-                new_ids = (
-                    set(df_new_run["eval_result_id"].unique()) - old_result_ids
+        else:
+            tool_files = [tool_test_file]
+
+        test_cases = []
+        for tf in tool_files:
+            print(f"Loading tool tests from {tf}")
+            test_cases.extend(tool_evals.load_tool_test_cases_from_file(tf))
+
+        if test_cases:
+            print(f"Running {len(test_cases)} tool tests")
+            df = tool_evals.run_tool_tests(test_cases)
+            results["tool"] = df.to_dict(orient="records")
+            if output_dir:
+                df.to_csv(
+                    os.path.join(output_dir, "tool_results.csv"), index=False
                 )
-                if new_ids:
-                    new_id = list(new_ids)[0]
-                    results["golden"] = load_golden_results(new_id, app_name)
+
+    # 3. Platform goldens (Wait for results)
+    if run_name:
+        print(f"Waiting for evaluation run {run_name} to complete...")
+        utils = EvalUtils(app_name=app_name)
+        utils.wait_for_run_and_get_results(
+            run_name=run_name, timeout_seconds=600
+        )
+        results["golden"] = load_golden_results(run_name, app_name)
 
     # 4. Local simulations
     if not simulation_dir:
@@ -1502,10 +1545,12 @@ def run_all_evals(
                     if isinstance(cases, list):
                         test_cases.extend(cases)
             if test_cases:
-                sim_results = sim_evals.run_simulations(test_cases)
+                sim_results = sim_evals.run_simulations(
+                    test_cases, runs=runs, modality=modality
+                )
                 results["simulation"] = sim_results
-                if evals_dir:
-                    save_path = os.path.join(evals_dir, "sim_results.json")
+                if output_dir:
+                    save_path = os.path.join(output_dir, "sim_results.json")
                     with open(save_path, "w") as f:
                         json.dump(sim_results, f, indent=2)
 
