@@ -1,0 +1,192 @@
+{
+  "name": "62c5d08c-fefd-40db-ac3c-a53c68bcb050",
+  "displayName": "Readback - Add Info During Confirmation",
+  "description": "User provides special requests alongside their time selection. The requests are deferred (BookReservation input) while the time gets immediate readback. After name is collected, the deferred group (name + requests) fires a combined readback that includes the allergy info from earlier. Verifies that unsolicited info added mid-flow is preserved through deferred routing.",
+  "tags": [
+    "slot-machine",
+    "readback",
+    "deferred-readback",
+    "additive-update",
+    "critical"
+  ],
+  "evaluationDatasets": [
+    "Bella Notte Slot Machine - Full Suite"
+  ],
+  "golden": {
+    "turns": [
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "I need a table for 4 this Friday"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_SetPartySize_Called",
+              "toolCall": {
+                "tool": "set_party_size",
+                "args": {
+                  "size": 4.0
+                }
+              }
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_SetPreferredDate_Called",
+              "toolCall": {
+                "tool": "set_preferred_date"
+              }
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Readback_Both",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "4"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Yes"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Times_Shown",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "PM"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "8:30 PM, and my wife has a shellfish allergy so please note that"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_SetSelectedTime_Called",
+              "toolCall": {
+                "tool": "set_selected_time"
+              }
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_SetSpecialRequests_Called",
+              "toolCall": {
+                "tool": "set_special_requests"
+              }
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Readback_Time",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "8:30"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Yes"
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Garcia"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_SetGuestName_Called",
+              "toolCall": {
+                "tool": "set_guest_name"
+              }
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Group_Readback_Name",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "Garcia"
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Group_Readback_Allergy",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "shellfish"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Yes, that's all correct"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Booking_Confirmed",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "BN-"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "evaluationExpectations": [
+      "Warm Restaurant Host Persona",
+      "No Technical Leakage"
+    ]
+  }
+}

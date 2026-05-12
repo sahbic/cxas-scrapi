@@ -1,0 +1,164 @@
+{
+  "name": "7199c054-2121-496e-9d40-765bb8a7bd10",
+  "displayName": "Off-the-Rails - Normal Detour Recovers",
+  "description": "User goes off-topic for 2 turns but then provides a date. Progress counter resets when setter is called. Verifies no false-positive escalation on normal conversational detours.",
+  "tags": [
+    "slot-machine",
+    "off-the-rails",
+    "stall-detection",
+    "no-false-positive"
+  ],
+  "evaluationDatasets": [
+    "Bella Notte Slot Machine - Full Suite"
+  ],
+  "golden": {
+    "turns": [
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Hi, table for 3 please"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_SetPartySize_Called",
+              "toolCall": {
+                "tool": "set_party_size",
+                "args": {
+                  "size": 3.0
+                }
+              }
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Readback_PartySize",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "3"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Yes that's right"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_ConfirmPending_Called",
+              "toolCall": {
+                "tool": "confirm_pending"
+              }
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Asks_For_Date",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "date"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Before I decide on a date, what kind of pasta dishes do you have?"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Answers_Helpfully",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "pasta"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Sounds delicious. Let's do July 15th"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_SetPreferredDate_Called",
+              "toolCall": {
+                "tool": "set_preferred_date"
+              }
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Readback_Date",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "July"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Yes"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_ConfirmPending_Date",
+              "toolCall": {
+                "tool": "confirm_pending"
+              }
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Shows_Available_Times",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "PM"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "evaluationExpectations": [
+      "Warm Restaurant Host Persona",
+      "Tool-Truth - Uses Exact System Values",
+      "No Technical Leakage",
+      "No False Escalation"
+    ]
+  }
+}

@@ -1,0 +1,163 @@
+{
+  "name": "cac15947-7e40-405f-a7fd-83cdcbaf7bcc",
+  "displayName": "Conversational Detour - Off-Topic Then Resume",
+  "description": "User asks an off-topic question mid-flow. Agent should answer helpfully then return to the reservation flow with readback confirmation.",
+  "tags": [
+    "slot-machine",
+    "natural-conversation",
+    "readback",
+    "detour"
+  ],
+  "evaluationDatasets": [
+    "Bella Notte Slot Machine - Full Suite"
+  ],
+  "golden": {
+    "turns": [
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Table for 4 please"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_SetPartySize_Called",
+              "toolCall": {
+                "tool": "set_party_size",
+                "args": {
+                  "size": 4.0
+                }
+              }
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Readback_PartySize",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "4"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Yes"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_ConfirmPending_Called",
+              "toolCall": {
+                "tool": "confirm_pending"
+              }
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Asks_For_Date",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "date"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Before I pick a date, what kind of food do you serve? Do you have gluten-free options?"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Answers_Menu_Question",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "Italian"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Great, let's do June 25th"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_SetPreferredDate_Called_After_Detour",
+              "toolCall": {
+                "tool": "set_preferred_date"
+              }
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Readback_Date",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "June"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Yes"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_ConfirmPending_Date",
+              "toolCall": {
+                "tool": "confirm_pending"
+              }
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_AvailableTimes_After_Resume",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "7:00 PM"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "evaluationExpectations": [
+      "Warm Restaurant Host Persona",
+      "Tool-Truth - Uses Exact System Values",
+      "No Technical Leakage"
+    ]
+  }
+}

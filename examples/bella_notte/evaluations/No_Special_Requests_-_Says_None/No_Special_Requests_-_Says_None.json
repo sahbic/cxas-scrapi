@@ -1,0 +1,239 @@
+{
+  "name": "a5151027-8d2b-45c7-8fb2-c4bddce58f42",
+  "displayName": "No Special Requests - Says None",
+  "description": "User explicitly says they have no special requests. Name is deferred (BookReservation input with readback_inputs: True). After both name and 'none' special requests are collected, a combined group readback fires. Agent should still call set_special_requests, and booking completes after group confirmation.",
+  "tags": [
+    "slot-machine",
+    "happy-path",
+    "readback",
+    "deferred-readback",
+    "edge-case"
+  ],
+  "evaluationDatasets": [
+    "Bella Notte Slot Machine - Full Suite"
+  ],
+  "golden": {
+    "turns": [
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Table for 2 please"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_SetPartySize_Called",
+              "toolCall": {
+                "tool": "set_party_size",
+                "args": {
+                  "size": 2.0
+                }
+              }
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Readback_PartySize",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "2"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Yes"
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "June 20th"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_SetPreferredDate_Called",
+              "toolCall": {
+                "tool": "set_preferred_date",
+                "args": {
+                  "date": "2026-06-20"
+                }
+              }
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Readback_Date",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "June"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Yes"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Times_Shown",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "6:00 PM"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "6 PM"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_SetSelectedTime_Called",
+              "toolCall": {
+                "tool": "set_selected_time"
+              }
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Readback_Time",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "6"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Yes"
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Smith"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_SetGuestName_Called",
+              "toolCall": {
+                "tool": "set_guest_name",
+                "args": {
+                  "name": "Smith"
+                }
+              }
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Asks_SpecialRequests_No_Name_Readback",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "special"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "None, just a regular table is fine"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_SetSpecialRequests_Called",
+              "toolCall": {
+                "tool": "set_special_requests"
+              }
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Group_Readback_Name",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "Smith"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Yes"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Confirmation_Number",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "BN-"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "evaluationExpectations": [
+      "Warm Restaurant Host Persona",
+      "Tool-Truth - Uses Exact System Values",
+      "No Technical Leakage",
+      "Slot-Filling Flow Progression"
+    ]
+  }
+}

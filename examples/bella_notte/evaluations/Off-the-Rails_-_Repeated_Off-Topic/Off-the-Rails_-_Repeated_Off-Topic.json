@@ -1,0 +1,106 @@
+{
+  "name": "c3c25604-5aa9-4a04-95b5-3db284e72790",
+  "displayName": "Off-the-Rails - Repeated Off-Topic",
+  "description": "User sends 4 consecutive off-topic messages without providing reservation info. Progress stall counter should hit threshold (4) and agent escalates with phone number.",
+  "tags": [
+    "slot-machine",
+    "off-the-rails",
+    "stall-detection",
+    "progress-stall"
+  ],
+  "evaluationDatasets": [
+    "Bella Notte Slot Machine - Full Suite"
+  ],
+  "golden": {
+    "turns": [
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Hi there"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Greeting_Asks_Party_Size",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "help"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Actually, what's the weather going to be like tonight?"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_No_Escalation_Yet_Turn2",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "reserv"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Do you guys have live music on weekends?"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_No_Escalation_Yet_Turn3",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "reserv"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "What about parking, is there a valet?"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Escalation_Message",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "555-0100"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "evaluationExpectations": [
+      "No Technical Leakage",
+      "Progress Stall Escalation"
+    ]
+  }
+}

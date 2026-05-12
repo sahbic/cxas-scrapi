@@ -35,13 +35,13 @@ The framework splits the problem: the LLM owns **language** (parsing user intent
 
 ### Three-Layer Architecture
 
-Everything lives in one callback file (CES limitation: callables can't cross tool boundaries):
+The framework is split across the CXAS app structure:
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│ 1. _get_config()          — Agent-specific                   │
-│    Slots, tasks, executors, formatters, conditions.          │
-│    Replace this per project.                                 │
+│ 1. dag_config tool        — Agent-specific                   │
+│    Slots, tasks, format specs, conditions, validation.       │
+│    Replace this per project. Pure serializable data.         │
 ├──────────────────────────────────────────────────────────────┤
 │ 2. _run_slot_filling()    — CES-agnostic orchestrator        │
 │    Takes config + state, returns action dict.                │
@@ -53,7 +53,7 @@ Everything lives in one callback file (CES limitation: callables can't cross too
 └──────────────────────────────────────────────────────────────┘
 ```
 
-To create a new agent, replace only `_get_config()`. Everything below it is copied unchanged.
+To create a new agent, replace only the `dag_config` tool. The callback framework is copied unchanged.
 
 ### What the LLM Owns vs. What Python Owns
 
@@ -62,7 +62,7 @@ To create a new agent, replace only `_get_config()`. Everything below it is copi
 | Understanding user intent | LLM | Tool selection based on user message |
 | Parsing values from natural language | LLM | Tool arguments (e.g., "next Friday" → "2026-07-18") |
 | Generating natural responses | LLM | Free-form text guided by `_system_message` |
-| Deciding what to ask next | Python | DAG evaluation → `_find_next_question` |
+| Deciding what to ask next | Python | DAG evaluation → `_find_next_slot_action` |
 | Deciding when to fire a task | Python | DAG evaluation → input readiness check |
 | Counting retries and escalating | Python | `_retries` dict + `max_retries` config |
 | Preventing invalid tool calls | Python | `_compute_hidden_tools` per turn |
@@ -150,18 +150,27 @@ See Section 11 of the full framework doc for the complete decision checklist.
 
 ## Files in This Example
 
-| File | Purpose |
+This is a full CXAS app — the same structure pushed to CES via `cxas_scrapi push`.
+
+| Path | Purpose |
 |---|---|
-| [`slot_filling_dag_framework.md`](slot_filling_dag_framework.md) | Full framework reference (1000+ lines) |
-| [`callback.py`](callback.py) | Complete callback with config + framework |
-| [`agent_instruction.md`](agent_instruction.md) | Agent instruction with slot filling protocol |
-| [`tools/`](tools/) | All setter tools (one per user-sourced slot) |
+| [`slot_filling_dag_framework.md`](slot_filling_dag_framework.md) | Full framework reference (1700+ lines) |
+| [`app.json`](app.json) | CXAS app config with variable declarations |
+| [`agents/`](agents/) | Agent with before_model, before_agent, after_tool callbacks |
+| [`agents/.../before_model_callbacks/.../python_code.py`](agents/Bella_Notte_Host/before_model_callbacks/before_model_callbacks_01/python_code.py) | The DAG framework (reusable engine) |
+| [`tools/dag_config/`](tools/dag_config/) | Agent-specific config: slots, tasks, validation |
+| [`tools/set_*/`](tools/) | Setter tools (one per user-sourced slot) |
+| [`tools/confirm_pending/`](tools/confirm_pending/) | Readback confirmation tool |
+| [`tools/reject_pending/`](tools/reject_pending/) | Readback rejection tool |
+| [`evaluations/`](evaluations/) | CES eval test cases |
+| [`evaluationExpectations/`](evaluationExpectations/) | Shared eval rubrics |
 
 ### Quick Start
 
 1. Read `slot_filling_dag_framework.md` to understand the concepts
-2. Study `callback.py` — the top half (`_get_config()`) is agent-specific, the bottom half is the reusable framework
-3. To build a new agent: copy `callback.py`, replace `_get_config()` with your slots/tasks/executors, create matching setter tools
+2. Study `tools/dag_config/` — this is the agent-specific config (slots, tasks, validation)
+3. Study `agents/.../before_model_callbacks/.../python_code.py` — the reusable DAG engine
+4. To build a new agent: copy the app, replace the `dag_config` tool with your slots/tasks, create matching setter tools
 
 ---
 

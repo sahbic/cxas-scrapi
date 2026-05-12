@@ -1,0 +1,218 @@
+{
+  "displayName": "Conditional Slot - Small Party Skips Phone",
+  "description": "Party of 2 should NOT trigger the large_party_phone slot. After time confirmation, name is deferred (BookReservation input with readback_inputs: True) — no individual readback. Once both name and special_requests are collected, a combined group readback fires. Verifies conditional slot is correctly skipped for small parties and deferred readback grouping works.",
+  "tags": [
+    "slot-machine",
+    "conditional-slot",
+    "small-party",
+    "deferred-readback",
+    "e2e"
+  ],
+  "evaluationDatasets": [
+    "Bella Notte Slot Machine - Full Suite"
+  ],
+  "golden": {
+    "turns": [
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "I'd like to make a reservation for 2"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_SetPartySize_Called_2",
+              "toolCall": {
+                "tool": "set_party_size",
+                "args": {
+                  "size": 2.0
+                }
+              }
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Readback_PartySize",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "2"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Yes"
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "This Saturday"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_SetPreferredDate_Called",
+              "toolCall": {
+                "tool": "set_preferred_date"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Yes"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_AvailableTimes_Presented",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "PM"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "7:30 PM please"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_SetSelectedTime_Called",
+              "toolCall": {
+                "tool": "set_selected_time"
+              }
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Readback_Time",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "7:30"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Yes"
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Under Chen"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_SetGuestName_Called",
+              "toolCall": {
+                "tool": "set_guest_name"
+              }
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Asks_SpecialRequests_No_Name_Readback",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "special"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "None"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_SetSpecialRequests_Called",
+              "toolCall": {
+                "tool": "set_special_requests"
+              }
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Group_Readback_Name",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "Chen"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Yes"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Confirmation_Number",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "BN-"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "evaluationExpectations": [
+      "No Technical Leakage",
+      "Slot-Filling Flow Progression"
+    ]
+  }
+}

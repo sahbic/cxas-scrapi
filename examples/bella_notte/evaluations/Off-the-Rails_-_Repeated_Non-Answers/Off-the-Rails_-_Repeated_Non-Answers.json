@@ -1,0 +1,138 @@
+{
+  "name": "ba6c34fc-d2a9-4edb-ae30-1060cffa7832",
+  "displayName": "Off-the-Rails - Repeated Non-Answers",
+  "description": "User provides a valid party size and confirms, but then gives 3 consecutive non-actionable responses when asked for a date. Progress stall counter hits threshold and agent escalates.",
+  "tags": [
+    "slot-machine",
+    "off-the-rails",
+    "stall-detection",
+    "progress-stall"
+  ],
+  "evaluationDatasets": [
+    "Bella Notte Slot Machine - Full Suite"
+  ],
+  "golden": {
+    "turns": [
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Table for 2"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_SetPartySize_Called",
+              "toolCall": {
+                "tool": "set_party_size",
+                "args": {
+                  "size": 2.0
+                }
+              }
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Readback_PartySize",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "2"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Yes"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Asks_For_Date",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "date"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "I'm not sure yet, I need to check my calendar"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_No_Escalation_Turn3",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "date"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Hmm, let me think about it"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_No_Escalation_Turn4",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "date"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Maybe some other time"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Escalation_Message",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "555-0100"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "evaluationExpectations": [
+      "No Technical Leakage",
+      "Progress Stall Escalation"
+    ]
+  }
+}

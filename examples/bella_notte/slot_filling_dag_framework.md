@@ -26,6 +26,10 @@ A **slot** is a named piece of data the conversation needs to collect or derive.
 
 - `"user"` — collected from the user via a setter tool (e.g., the user says "4 people" and the LLM calls `set_party_size(4)`)
 - `"task:TaskName"` — populated automatically when a backend task succeeds (e.g., `available_times` is filled when `FindAvailableTimes` returns)
+- `"event"` — pre-filled from external signals (telephony data, web forms, CRM lookups) injected as session variables. Requires `"event_key"` (the key in `event_data`). Pre-filled slots are written directly to `sm["filled"]` by `before_model_callback`, so the framework skips asking for them. See Section 12.1.
+- `"announce"` — framework-controlled slot that delivers text (greeting, disclosure, status message) and fills a completion bit (`True`). No setter, no readback. See Section 12.3.
+
+`source` can be a **single string** or an **ordered list** of sources. When a list is given, sources are evaluated in priority order. For example, `"source": ["event", "user"]` means: try event data first; if no event data is present, fall back to asking the user via the setter tool. The framework normalizes single strings to a one-element list internally via `_normalize_sources()`.
 
 Slots are declared as an ordered list. The order defines the default question sequence — the framework asks for the first unfilled slot whose dependencies are met.
 
@@ -57,13 +61,14 @@ Key properties:
 | Field | Purpose |
 |---|---|
 | `name` | Unique identifier. Also the key in `filled`/`pending` dicts. |
-| `source` | `"user"` or `"task:TaskName"`. Determines whether the LLM asks for it or a task produces it. |
+| `source` | A string or ordered list of strings. Values: `"user"`, `"task:TaskName"`, `"event"`. A list like `["event", "user"]` means: try event first, fall back to user. Single strings are normalized to `[source]` internally. |
+| `event_key` | Key in `event_data` to read from (event-sourced slots only). Defaults to the slot name. |
 | `setter` | Tool name the LLM calls to set this slot (user-sourced slots only). |
 | `ask` | Prompt template shown when this is the next slot to fill. Supports `{slot_name}` placeholders resolved from already-filled slots. |
 | `requires` | List of slot names that must be filled before this slot's question is eligible. Enforces ordering constraints (e.g., can't ask "which time?" until availability is known). |
 | `requires_readback` | If `True`, values stay in `pending` for user confirmation before moving to `filled`. If `False` or absent, the framework auto-promotes to `filled` immediately. |
-| `readback_fmt` | Callable that produces the human-readable fragment for confirmation readback (e.g., `4` → `"4 guests"`). |
-| `condition` | Optional callable `(filled) → bool`. When present, the slot is only active if the condition returns `True`. Inactive slots are skipped and don't block tasks. See Section 4.4. |
+| `readback_fmt` | Format spec for readback text. Can be: a built-in name (`"date"`, `"time"`), a dict spec (`{"type": "plural", "one": "guest", "other": "guests"}`), or a lambda string (`"lambda v: f'custom {v}'"`). Compiled to a callable once at startup by `_compile_config()`. Built-in dict types: `prefix` (prepend text), `plural` (count + singular/plural noun), `none_sub` (replace none-like values). |
+| `condition` | Optional lambda string (e.g., `"lambda filled: int(filled.get('party_size', 0)) >= 5"`) compiled to a callable once at startup. When present, the slot is only active if the condition returns `True`. Inactive slots are skipped and don't block tasks. See Section 4.4. |
 | `validation` | Optional dict with `errors` (code → message mapping), `max_retries`, and `on_exhaust` config. See Section 5b. |
 
 ### 2.2 Tasks
@@ -73,6 +78,7 @@ A **task** is a backend operation that fires when all its input slots are filled
 ```python
 "tasks": [
     {"name": "CheckAvailability",
+     "tool": "check_availability",
      "inputs": ["num_guests", "date"],
      "outputs": {"open_slots": "open_slots"},
      "success_check": "success",
@@ -85,6 +91,7 @@ A **task** is a backend operation that fires when all its input slots are filled
      }},
 
     {"name": "MakeReservation",
+     "tool": "make_reservation",
      "inputs": ["num_guests", "date", "chosen_time", "name"],
      "outputs": {"confirmation": "confirmation"},
      "success_check": "success",
@@ -102,10 +109,13 @@ Key properties:
 
 | Field | Purpose |
 |---|---|
-| `inputs` | Slot names that must all be in `filled` before this task can fire. |
+| `tool` | CES tool name the framework calls to execute this task (e.g., `"check_availability"`). |
+| `inputs` | Slot names that must all be in `filled` before this task can fire. These are passed as arguments to the tool. |
+| `requires` | Slot names that must be filled before the task fires, but are NOT passed as arguments. Separates "gates" from "data." See Section 12.4. |
 | `outputs` | `{result_key: slot_name}` — maps keys from the task's return dict into filled slots. This is how task-sourced slots get populated. The framework validates that all declared output keys are present in the result; missing keys are treated as a task failure (see Section 3.2). |
 | `success_check` | Key in the result dict that must be truthy for the task to count as successful. |
 | `terminal` | If `True`, successful completion ends the conversation (sets `status = "complete"`). |
+| `readback_inputs` | Defer slot readback to grouped confirmation (7a). |
 | `then_say` | Message template shown on success. Supports `{slot_name}` placeholders. |
 | `on_failure` | Retry and escalation configuration (see Section 5). |
 
@@ -137,16 +147,32 @@ The framework walks this DAG on every callback invocation, deciding what to do n
 
 ### 2.4 State
 
-All state lives in a single session-scoped dict called `sm` (slot manager):
+All state lives in a session-scoped dict called `sm`
+(slot manager), declared in `app.json` as a variable
+with a rich default:
+
+```python
+sm = callback_context.state.get("sm", {})
+```
+
+CES persists declared variables across turns. The `sm`
+variable is declared in `app.json`'s
+`variableDeclarations` with a default that includes
+pre-populated `_tool_selection`, `_slot_ordering`, and
+`_prereq_note` so the LLM has correct tool routing
+hints from the very first turn.
+
+The `sm` dict contains:
 
 ```python
 sm = {
     "filled":         {},    # confirmed values: {"num_guests": 4, "date": "2026-07-15"}
     "pending":        {},    # values awaiting user confirmation (readback)
+    "deferred":       {},    # values held for grouped readback (see Section 7a)
     "task_results":   {},    # successful task outputs: {"CheckAvailability": {...}}
     "_retries":       {},    # failure counts: {"CheckAvailability": 1, "slot:num_guests": 2, "readback": 1}
     "_slot_errors":   [],    # validation errors from setter tools: [{"slot": "...", "code": "..."}]
-    "_last_state":    {},    # snapshot of filled/pending from prior invocation (for change detection)
+    "_last_state":    {},    # filled/pending/deferred snapshot
     "_readback_stall": 0,    # consecutive callback cycles with non-empty pending and no confirm/reject
     "_progress_turns": 0,    # callback cycles since last forward progress (slot fill, task fire, readback)
     "_system_message": "",   # next message for the LLM to relay (written by the callback adapter)
@@ -167,9 +193,9 @@ No collision between the three namespaces.
 
 ## 3. The Callback Lifecycle
 
-The framework is structured as three layers, all in a single file (CES platform limitations prevent splitting across tools — callables can't be JSON-serialized, tools can't call other tools, and tool `context.state` may be stale within a turn):
+The framework is structured as three layers, all in a single file (CES platform limitations prevent splitting across tools — tools can't access the `tools` global, and tool `context.state` may be stale within a turn):
 
-1. **`_get_config()`** — agent-specific: slots, tasks, executors, formatters, conditions. Replace this per project.
+1. **`_get_config()`** — agent-specific: slots, tasks (with `tool` keys), format specs, conditions. Returns pure serializable data (no callables). Replace this per project.
 2. **`_run_slot_filling(config, sm)`** — the orchestrator. CES-agnostic: takes a config dict and state dict, returns `{"hide_tools": [...], "preempt": bool, "message": str|None}`. Never touches CES types (`LlmResponse`, `Part`, `llm_request`, `callback_context`).
 3. **`before_model_callback()`** — thin CES adapter (~15 lines). Calls `_get_config()` and `_validate_config()`, passes config + state to the orchestrator, writes the returned message to `sm["_system_message"]`, applies tool visibility via `llm_request.config.hide_tool()`, and optionally preempts the LLM via `LlmResponse.from_parts()`.
 
@@ -240,18 +266,34 @@ Because it's pure, it's trivially testable: pass in state dicts, assert on the r
 
 ### 3.2 execute_dag_step() — The Mutation Point
 
-Takes the action from `compute_dag_state` and applies it. Returns the message string; the callback adapter handles writing it to state.
+Takes the action from `compute_dag_state` and applies it.
+Returns the message string; the callback adapter handles
+writing it to state.
 
 - **Passthrough actions** (`awaiting_readback`, `next_question`, `all_done`): returns the message directly.
 - **Fire action — success**: calls the executor, validates that declared output keys are present in the result (missing keys are treated as failure), stores the result in `task_results`, writes outputs into `filled`, marks terminal tasks complete, and **cascades** (re-evaluates the DAG to fire any newly-ready tasks or set the next question).
 - **Fire action — failure**: increments `_retries`, optionally clears slots, checks exhaustion, returns the appropriate message.
-- **Exception safety**: the executor call is wrapped in a `try/except`. If an executor raises an exception, the framework synthesizes a failure result (`{success_check_key: False}`) and feeds it into the normal retry/exhaust path. This prevents a single executor crash from taking down the entire callback.
+- **Exception safety**: the executor call is wrapped in a
+  `try/except`. If an executor raises an exception, the
+  framework synthesizes a failure result
+  (`{success_check_key: False}`) and feeds it into the
+  normal retry/exhaust path. This prevents a single
+  executor crash from taking down the entire callback.
 
-The separation of `compute_dag_state` (pure) from `execute_dag_step` (effectful) means the decision logic can be understood, tested, and reasoned about without worrying about mutation timing.
+The separation of `compute_dag_state` (pure) from
+`execute_dag_step` (effectful) means the decision logic can
+be understood, tested, and reasoned about without worrying
+about mutation timing.
 
 ### 3.3 Cascading (Iterative)
 
-When a non-terminal task succeeds, it may fill slots that are inputs to the next question or even another task. Rather than waiting for the next user message to re-evaluate, `execute_dag_step` **immediately re-evaluates** the DAG using a `while action == "fire"` loop and processes cascaded actions iteratively. This avoids recursion depth issues in agents with many chained tasks.
+When a non-terminal task succeeds, it may fill slots that
+are inputs to the next question or even another task. Rather
+than waiting for the next user message to re-evaluate,
+`execute_dag_step` **immediately re-evaluates** the DAG
+using a `while action == "fire"` loop and processes cascaded
+actions iteratively. This avoids recursion depth issues in
+agents with many chained tasks.
 
 Example cascade:
 
@@ -269,10 +311,12 @@ The callback adapter calls `_validate_config(config)` before passing the config 
 2. **Task inputs reference valid slots** — every name in a task's `inputs` list exists in slots.
 3. **Task outputs reference valid slots** — every `slot_name` in a task's `outputs` values exists in slots.
 4. **Task-sourced slots have matching tasks** — a slot with `source: "task:X"` has a task named `X` in tasks.
-5. **Executors exist for all tasks** — every task name has a corresponding key in executors.
-6. **Requires reference valid slots** — every name in a slot's `requires` list exists in slots.
-7. **No circular requires** — the `requires` graph is acyclic (detects cycles via DFS).
-8. **Callables are callable** — slot and task `condition` fields must be callable if present.
+5. **Tasks have tool keys** — every task has a `"tool"` key specifying the CES tool to call.
+6. **Task requires reference valid slots** — every name in a task's `requires` list exists in slots.
+7. **Requires reference valid slots** — every name in a slot's `requires` list exists in slots.
+8. **No circular requires** — the `requires` graph is acyclic (detects cycles via DFS).
+9. **Conditions are valid** — slot and task `condition` fields must be callable or lambda strings if present.
+10. **Announce slots have message** — slots with `source: "announce"` must have a `message` field and must NOT have a `setter`.
 
 ---
 
@@ -312,11 +356,11 @@ Additionally, during fresh pending the **setter for each slot already in `pendin
 
 ### 4.4 Conditional Slots
 
-Slots can have a `condition` callable that determines whether the slot is active. Inactive slots are automatically hidden (setter not visible), skipped by the question-finding logic, and don't block tasks that list them as inputs.
+Slots can have a `condition` — a lambda string compiled to a callable at startup — that determines whether the slot is active. Inactive slots are automatically hidden (setter not visible), skipped by the question-finding logic, and don't block tasks that list them as inputs.
 
 ```python
 {"name": "contact_phone", "source": "user", "setter": "set_phone",
- "condition": lambda filled: int(filled.get("num_guests", 0)) >= 5,
+ "condition": "lambda filled: int(filled.get('num_guests', 0)) >= 5",
  "ask": "For large parties, we need a contact number."}
 ```
 
@@ -695,17 +739,331 @@ A broader safety net that catches **any** conversation making no forward progres
 
 **Counter resets (any forward progress resets to 0):**
 
-The framework compares `filled` and `pending` against a snapshot from the prior invocation (`_last_state`). Any change (new slot filled, new value pending, pending cleared by confirmation) resets `_progress_turns` to 0. This means setters, `confirm_pending`, `reject_pending`, and task execution all implicitly reset the counter — any state change counts as progress.
+The framework compares `filled` and `pending` against a
+snapshot from the prior invocation (`_last_state`). Any change
+(new slot filled, new value pending, pending cleared by
+confirmation) resets `_progress_turns` to 0. This means
+setters, `confirm_pending`, `reject_pending`, and task
+execution all implicitly reset the counter -- any state
+change counts as progress.
 
-**Why 4 turns?** This is tight enough to catch the LLM going off the rails quickly — 4 consecutive turns with no slot fill, task fire, or readback action means the conversation is stuck. The counter resets on every meaningful state change, so normal flows (including corrections and brief off-topic detours) never approach this limit. Agents with more complex flows may increase this.
+**Why 4 turns?** This is tight enough to catch the LLM
+going off the rails quickly -- 4 consecutive turns with no
+slot fill, task fire, or readback action means the
+conversation is stuck. The counter resets on every meaningful
+state change, so normal flows (including corrections and
+brief off-topic detours) never approach this limit. Agents
+with more complex flows may increase this.
 
-**Relationship to readback stall:** The two detectors are independent. The readback stall fires at 3 cycles when pending is non-empty and no readback tool is called. The progress stall fires at 4 turns with no state change of any kind. A conversation can trigger the readback stall (which rejects pending, counting as a state change that resets the progress counter) without ever hitting the progress stall. See Section 7.6 for readback stall details.
+**Relationship to readback stall:** The two detectors are
+independent. The readback stall fires at 3 cycles when
+pending is non-empty and no readback tool is called. The
+progress stall fires at 4 turns with no state change of any
+kind. A conversation can trigger the readback stall (which
+rejects pending, counting as a state change that resets the
+progress counter) without ever hitting the progress stall.
+See Section 7.6 for readback stall details.
+
+---
+
+## 7a. Deferred Readback (Grouped Confirmation)
+
+Standard readback (Section 7) confirms each slot
+immediately after it's set. This is correct for slots like
+`party_size` or `date` that gate downstream tasks -- the
+user should confirm before the system acts on them. But for
+slots that are all inputs to the same terminal task (e.g.,
+`guest_name` and `special_requests` are both inputs to
+`BookReservation`), confirming each one individually creates
+unnecessary friction:
+
+```
+Agent: "Under the name Chen. Correct?"  <- readback
+User:  "Yes"
+Agent: "Any special requests?"
+User:  "No"
+Agent: "No special requests. Correct?"  <- readback
+User:  "Yes"
+```
+
+With deferred readback, the framework collects these values
+silently and confirms them together in a single grouped
+readback:
+
+```
+Agent: "What name for the reservation?"
+User:  "Chen"
+Agent: "Any special requests?"                      <- name silently deferred
+User:  "No"
+Agent: "Let me confirm -- name Chen, no special     <- grouped readback
+        requests. Is that correct?"
+User:  "Yes"
+```
+
+### 7a.1 How It Works
+
+Deferred readback is enabled per-task via the
+`readback_inputs: True` flag on a task definition:
+
+```python
+{
+    "name": "BookReservation",
+    "inputs": ["party_size", "date", "time", "guest_name", "special_requests"],
+    "readback_inputs": True,   # enables deferred readback
+    "terminal": True,
+    ...
+}
+```
+
+When `readback_inputs` is `True`, user-sourced input slots
+for that task follow a different lifecycle:
+
+1. **Setter writes to `pending`** (all setters always write
+   to pending -- this is unchanged).
+2. **Auto-promote + route**: During
+   `_auto_promote_and_route`, the framework checks if the
+   slot is **deferred-eligible** (see Section 7a.2). If so,
+   the value is moved from `pending` to `deferred` instead
+   of staying in `pending` for immediate readback.
+3. **No readback**: Because the value is no longer in
+   `pending`, the LLM doesn't receive a readback prompt for
+   it. The framework injects a `<deferred_collection>` hint
+   into the system instruction telling the LLM to proceed
+   to the next question instead of reading back.
+4. **Group completion**: When all user-sourced active inputs
+   for the task are accounted for (in `filled`, `pending`,
+   or `deferred`), the deferred values promote from
+   `deferred` to `pending` for a single grouped readback.
+5. **Grouped readback**: The LLM receives a
+   `<readback_scope>` hint listing ALL promoted values with
+   their slot labels, presented in a stronger format ("You
+   MUST confirm ALL of the following values together").
+
+### 7a.2 Deferred Eligibility
+
+A slot is deferred-eligible when ALL four conditions hold
+(`_compute_deferred_eligible`):
+
+1. **`requires_readback: True`** -- only readback slots can
+   be deferred (non-readback slots auto-promote to `filled`
+   directly).
+2. **Input to at least one task with
+   `readback_inputs: True`** -- the slot must belong to a
+   task that uses grouped confirmation.
+3. **NOT input to any incomplete task WITHOUT
+   `readback_inputs`** -- if the slot also feeds a task that
+   needs immediate confirmation (e.g.,
+   `FindAvailableTimes`), it must be confirmed immediately
+   so that task can fire.
+4. **No task-sourced `requires`** -- if the slot depends on
+   a task output (e.g., `selected_time` requires
+   `available_times`), it cannot be deferred because it's
+   gated by the task execution and should be confirmed in
+   the normal flow after the task fires.
+
+**Example**: In the Bella Notte config:
+
+- `party_size` and `preferred_date` are inputs to
+  `FindAvailableTimes` (no `readback_inputs`) AND
+  `BookReservation` (`readback_inputs: True`). Condition 3
+  fails -- they are NOT deferred, because
+  `FindAvailableTimes` needs their confirmed values to fire.
+- `selected_time` requires `available_times`
+  (task-sourced). Condition 4 fails -- NOT deferred.
+- `guest_name` and `special_requests` are inputs ONLY to
+  `BookReservation` (which has `readback_inputs: True`),
+  have no task-sourced requires. All conditions pass --
+  they ARE deferred.
+
+### 7a.3 Group Completion
+
+`_check_deferred_groups` runs on every callback invocation
+(as part of `_auto_promote_and_route`). For each task with
+`readback_inputs: True`:
+
+1. Walk the task's `inputs` list, considering only
+   user-sourced active slots.
+2. Skip slots already in `filled` or `pending` (these are
+   accounted for).
+3. Check if remaining slots are in `deferred`.
+4. If ALL remaining user-sourced inputs are accounted for,
+   the group is **complete**. Move all deferred values for
+   this group from `deferred` to `pending`.
+
+**When does a group complete?** The last deferred-eligible
+input arriving triggers completion. In the Bella Notte
+example, `guest_name` and `special_requests` are the only
+deferred slots. When the user provides the second one (e.g.,
+special requests after the name),
+`_check_deferred_groups` sees both are in `deferred` and
+`party_size`, `date`, `time` are all in `filled` -- the
+group is complete -- both promote to `pending`.
+
+### 7a.4 System Instruction Hints
+
+The framework communicates deferred readback state to the
+LLM via two XML-tagged hints injected into
+`system_instruction`:
+
+**`<deferred_collection>`** -- Injected when values were
+just routed to deferred (`fresh_deferred` is true) and no
+pending values exist:
+
+```
+<deferred_collection>
+The value(s) just collected (guest_name) are noted and will be confirmed
+later together with related information. Do NOT read them back or ask for
+confirmation now. Instead, proceed to ask: Do you have any special requests
+or dietary needs?
+</deferred_collection>
+```
+
+This prevents the LLM from reading back a value that the
+framework deliberately deferred. Without it, the LLM would
+see that it just called `set_guest_name` and naturally want
+to confirm the name.
+
+**`<readback_scope>`** -- Injected when values promoted from
+deferred are now in `pending` (`promoted_from_deferred` is
+true). Uses a stronger format with slot labels:
+
+```
+<readback_scope>
+You MUST confirm ALL of the following values together in a single
+readback -- do NOT omit any:
+  - guest_name: under the name Chen
+  - special_requests: no special requests
+</readback_scope>
+```
+
+The stronger wording ("MUST", "do NOT omit") and labeled
+format ensure the LLM reads back ALL deferred values, not
+just the most recent one. Without this reinforcement, the
+LLM tends to read back only the last value it set (e.g.,
+just the special requests) and silently drop the earlier
+deferred values (e.g., the name).
+
+**Hint lifecycle**: Previous hints are stripped via `re.sub`
+before new ones are appended. This is critical because
+`system_instruction` is the same object across
+`before_model_callback` invocations within a turn. Without
+stripping, a `<deferred_collection>` from an earlier
+invocation (saying "don't read back") would persist
+alongside a later `<readback_scope>` (saying "MUST read
+back") -- contradictory instructions that confuse the LLM.
+
+### 7a.5 State Flow Diagram
+
+```
+                     Setter writes to pending
+                              │
+                              ▼
+                    ┌─────────────────┐
+                    │ Deferred-       │
+              no    │ eligible?       │   yes
+           ┌────── │ (Section 7a.2)  │ ──────┐
+           │        └─────────────────┘        │
+           ▼                                   ▼
+     stays in pending                 moves to deferred
+     (normal readback)                (<deferred_collection> hint)
+           │                                   │
+           ▼                                   ▼
+     LLM reads back                   ┌─────────────────┐
+     immediately                      │ Group complete?  │
+                                no    │ (Section 7a.3)  │   yes
+                             ┌─────── └─────────────────┘ ──────┐
+                             │                                   │
+                             ▼                                   ▼
+                       stays in deferred               promotes to pending
+                       (collect next slot)             (<readback_scope> hint)
+                                                               │
+                                                               ▼
+                                                      grouped readback
+                                                      (user confirms all)
+```
+
+### 7a.6 Interaction with Other Features
+
+**Tool visibility**: Deferred values do not trigger the
+`awaiting_readback` phase -- `compute_dag_state` only checks
+`pending`, not `deferred`. The LLM continues to see setters
+for the next unfilled slot. `confirm_pending` and
+`reject_pending` remain hidden until values actually reach
+`pending` via group promotion.
+
+**Auto-confirm**: Works normally on grouped readbacks. When
+the user says "yes" to confirm promoted deferred values,
+auto-confirm merges all pending values to `filled`.
+
+**Conditional slots**: `_deactivate_conditional_slots` also
+clears deferred values when a slot's condition becomes
+`False`. Auto-deactivation handles all three dicts
+(`filled`, `pending`, `deferred`).
+
+**`_find_next_question`**: The question-finder skips slots
+that are in `deferred` (in addition to `filled` and
+`pending`), so the framework doesn't re-ask for a value
+that's already been collected but is waiting for group
+completion.
+
+**Fresh pending detection**: When deferred values promote to
+`pending`, this counts as `fresh_pending`, which triggers
+the normal readback flow (hide
+`confirm_pending`/`reject_pending` for one cycle to force
+the LLM to read back before confirming).
+
+### 7a.7 Worked Example: Deferred Readback
+
+Using the Bella Notte reservation agent:
+
+```
+Turn 1-4: Collect party_size, date, time (normal flow with readback)
+  filled = {party_size: 4, preferred_date: "2026-06-17",
+            available_times: "...", selected_time: "20:30"}
+
+Turn 5: User provides name
+  LLM calls: set_guest_name("Chen")
+  pending = {guest_name: "Chen"}
+  _auto_promote_and_route:
+    guest_name is deferred-eligible → deferred = {guest_name: "Chen"}
+    _check_deferred_groups: special_requests not yet collected → not complete
+  Result: no pending, fresh_deferred=True
+  <deferred_collection> hint: "guest_name noted,
+    proceed to ask special requests"
+  LLM: "Any special requests or dietary needs?"
+
+Turn 6: User says "No"
+  LLM calls: set_special_requests("None")
+  pending = {special_requests: "None"}
+  _auto_promote_and_route:
+    special_requests is deferred-eligible
+      → deferred = {guest_name: "Chen",
+                     special_requests: "None"}
+    _check_deferred_groups: all BookReservation inputs accounted for → COMPLETE
+    → pending = {guest_name: "Chen", special_requests: "None"}
+    → deferred = {}
+  promoted_from_deferred = True, fresh_pending = True
+  <readback_scope> hint: "MUST confirm ALL:
+    - guest_name: under the name Chen
+    - special_requests: no special requests"
+  LLM: "Let me confirm -- reservation under Chen, no special requests.
+        Is that correct?"
+
+Turn 7: User says "Yes"
+  auto-confirm: pending → filled
+  BookReservation fires → confirmation number returned
+  Preempt: "Your reservation is confirmed! Number: BN-..."
+```
 
 ---
 
 ## 8. LLM Preemption
 
-Sometimes the framework can generate the complete response without the LLM. When a task fires and produces a message (via `then_say` or `retry_say`), the framework can **preempt** the LLM call entirely — returning a pre-built response and skipping the model generation.
+Sometimes the framework can generate the complete response
+without the LLM. When a task fires and produces a message
+(via `then_say` or `retry_say`), the framework can
+**preempt** the LLM call entirely -- returning a pre-built
+response and skipping the model generation.
 
 ### 8.1 Why Preempt?
 
@@ -810,7 +1168,7 @@ When a non-terminal task succeeds and fills output slots, the framework immediat
 | Deciding when to escalate | Python | `retries >= max_retries` check |
 | Enforcing slot dependencies | Python | `requires` check + tool visibility |
 | Preventing invalid tool calls | Python | `_compute_hidden_tools` per turn — hides filled, inactive, and dependency-blocked setters |
-| Generating readback text | Python | `_build_readback` with configured formatters |
+| Generating readback text | Python | `_build_readback` with compiled format specs |
 | Confirming/rejecting readback | LLM | Calls `confirm_pending` / `reject_pending` based on user response |
 | Short-circuiting confirmation for clear affirmatives | Python | `_is_affirmative()` + auto-confirm block in `_run_slot_filling` — merges pending without LLM call |
 | Handling slot validation errors | Python | `_handle_slot_errors` resolves message from config, tracks retries |
@@ -821,6 +1179,8 @@ When a non-terminal task succeeds and fills output slots, the framework immediat
 | Config validation | Python | `_validate_config()` called by adapter before orchestrator — catches misconfig early |
 | Executor exception safety | Python | `try/except` in `execute_dag_step` synthesizes failure result on crash |
 | Detecting global progress stalls | Python | `_progress_turns` counter, escalation via `progress_stall` config |
+| Deferred routing | Python | Deferred eligibility + group completion |
+| Deferred hints | Python | `<deferred_collection>`, `<readback_scope>` hints |
 | Observability | Python | `_log_event()` appends structured events to `_debug_log` (capped at 20) |
 
 The key insight: **the LLM is a language interface, not a state machine.** It translates between human language and structured tool calls. Python handles everything else.
@@ -899,17 +1259,362 @@ Rules 3-5 describe things only the LLM can do. Rules 1-2 describe things the LLM
 
 ## 12. Adding a New Agent
 
-To create a new agent with this framework, replace one function: `_get_config()`. This function returns a dict containing:
+To create a new agent with this framework, replace one
+function: `_get_config()`. This function returns a dict
+containing:
 
-1. **Slots** — what data to collect, in what order, with formatters, conditions, and validation rules.
-2. **Tasks** — what backend operations to fire, with inputs, outputs, success checks, and retry config.
-3. **Executors** — the business logic functions keyed by task name. These receive the `filled` dict and return a result dict.
-4. **Readback tools** — the tool names for confirm/reject (typically `["confirm_pending", "reject_pending"]`).
-5. **Readback retry** and **progress stall** configs — escalation rules for stuck conversations.
+1. **Slots** -- what data to collect, in what order, with
+   format specs, conditions, and validation rules.
+2. **Tasks** -- what backend operations to fire, with a
+   `tool` key naming the CES tool, inputs, outputs, success
+   checks, and retry config.
+3. **Readback retry** and **progress stall** configs --
+   escalation rules for stuck conversations.
 
-Formatters, conditions, and executors are defined as closures inside `_get_config()`, so they can reference each other and use domain-specific imports.
+The `confirm_pending` and `reject_pending` readback tools
+are hardcoded in the framework -- they don't appear in the
+agent config.
 
-Everything below `_get_config()` in the file — the callback adapter, the orchestrator, and all framework internals — is copied unchanged.
+All config values are pure serializable data — no callables.
+Formatters use general-purpose type specs (e.g.,
+`{"type": "plural", "one": "guest", "other": "guests"}`) or
+named built-ins (`"date"`, `"time"`). Conditions are lambda
+strings (e.g., `"lambda filled: ..."`). Both are compiled to
+callables once at startup by `_compile_config()`.
+
+Everything below `_get_config()` in the file -- the callback
+adapter, the orchestrator, and all framework internals -- is
+copied unchanged.
+
+### 12.1 Event-Driven Slot Pre-Filling
+
+Slots can be pre-populated from external signals (telephony
+data, web forms, CRM lookups) injected via
+`sessions.run(variables={"event_data": {...}})`.
+
+#### Declaring the event_data variable
+
+CES only exposes **declared** variables in
+`callback_context.state`. Declare `event_data` in
+`app.json`:
+
+```json
+{
+    "name": "event_data",
+    "schema": {"type": "OBJECT", "default": {}}
+}
+```
+
+#### Config-driven source
+
+Mark a slot as event-sourced in `_get_config()` by
+including `"event"` in its `source` list and specifying
+an `"event_key"`. Include `"user"` in the list so the
+slot's setter remains visible when no event data is
+present:
+
+```python
+{
+    "name": "party_size",
+    "source": ["event", "user"],
+    "event_key": "party_size",
+    "setter": "set_party_size",
+    "ask": "How many guests will be dining?",
+    ...
+}
+```
+
+The `source` list is evaluated in priority order: the
+framework tries `"event"` first (check `event_data`),
+then falls back to `"user"` (show setter, ask the user).
+All `source` values are normalized to lists internally
+via `_normalize_sources()`, so single-string sources
+like `"user"` remain backward compatible.
+
+#### Pre-fill location: `before_model_callback`
+
+Event pre-fill runs in `before_model_callback`, after
+`_validate_config()` but before DAG evaluation. It runs
+once per session (guarded by `sm["_events_checked"]`):
+
+```python
+if not sm.get("_events_checked"):
+    event_data = callback_context.state.get("event_data", {})
+    if event_data:
+        event_values = {}
+        for slot_def in config["slots"]:
+            if "event" not in _normalize_sources(
+                slot_def.get("source", "user"),
+            ):
+                continue
+            key = slot_def.get("event_key", slot_def["name"])
+            value = event_data.get(key)
+            if value is not None:
+                event_values[slot_def["name"]] = value
+        if event_values:
+            result = fill_slots(sm, config, event_values)
+            if result["filled"]:
+                sm["_event_prefilled_this_turn"] = True
+    sm["_events_checked"] = True
+```
+
+Event pre-fill uses `fill_slots()` (Section 12.2) with
+`skip_readback=True` (the default), writing trusted event
+data directly to `filled`.
+
+#### Timing: stale instruction patching
+
+**The timing problem**: `before_agent_callback` bakes
+the instruction template (with `_tool_selection`,
+`_slot_ordering`) via static variable substitution BEFORE
+`before_model_callback` runs. On the first turn with
+event data, the baked instruction still mentions the
+pre-filled slot.
+
+**The fix**: When `_event_prefilled_this_turn` is set,
+`before_model_callback`:
+
+1. Strips the stale `<slot_filling_protocol>` block from
+   `system_instruction` (which still lists the pre-filled
+   slot).
+2. Injects a fresh `<system_directive>` with the correct
+   next question (computed from the DAG, which now sees
+   the slot as filled).
+
+On subsequent turns, `before_agent_callback` regenerates
+the instruction from the updated `sm` state, so the
+stale-instruction problem is a first-turn-only issue.
+
+#### Tool visibility for event-sourced slots
+
+The tool selection generator includes any slot with
+`"user"` in its source list (whether `"user"`,
+`["event", "user"]`, or any other combination). Filled event slots are excluded from
+tool selection (same as any other filled slot). This
+means:
+
+- **With event data**: slot is pre-filled → setter hidden
+  → LLM skips to next slot.
+- **Without event data**: slot is unfilled → setter
+  visible → LLM asks the user normally.
+
+#### Why `filled` and not `pending`
+
+Event data comes from the system (telephony, CRM), not
+from the user's spoken input. There's nothing to read back
+and confirm — the data is authoritative. Writing to
+`filled` skips the readback/confirm cycle entirely.
+
+#### Idempotency
+
+The `_events_checked` flag ensures pre-fill runs once
+per session. The `if name in filled` guard prevents
+overwriting values that were already set. If the user
+later corrects a pre-filled value via a setter tool, the
+correction takes precedence.
+
+#### Testing with CES evals
+
+Inject event data via the standard CES eval format using
+`userInput.variables` and `userInput.event` as separate
+steps in the same turn:
+
+```json
+{
+  "turns": [{
+    "steps": [
+      {"userInput": {"variables": {"event_data": {"party_size": 4}}}},
+      {"userInput": {"event": {"event": "welcome"}}},
+      {"expectation": {"agentResponse": {"chunks": [{"text": "welcome"}]}}}
+    ]
+  }, {
+    "steps": [
+      {"userInput": {"text": "I'd like to make a reservation"}},
+      {"expectation": {
+        "note": "Agent should ask for date, NOT party size",
+        "agentResponse": {"chunks": [{"text": "date"}]}
+      }}
+    ]
+  }]
+}
+```
+
+For programmatic testing via SCRAPI:
+
+```python
+sessions.run(
+    session_id=sid,
+    event="WELCOME",
+    variables={"event_data": {"party_size": 4}}
+)
+```
+
+### 12.2 Programmatic Slot Filling: `fill_slots()`
+
+The `fill_slots()` function lets you fill slots from any
+Python context -- callbacks, tools, test harnesses, or
+external integrations. The DAG engine advances
+automatically on the next `before_model_callback`
+invocation.
+
+```python
+def fill_slots(
+    sm: dict[str, Any],
+    config: dict[str, Any],
+    values: dict[str, Any],
+    skip_readback: bool = True,
+) -> dict[str, list[str]]:
+```
+
+**Parameters:**
+
+| Param | Type | Description |
+|---|---|---|
+| `sm` | dict | The state machine dict (`callback_context.state["sm"]`). |
+| `config` | dict | The compiled DAG config from `_compile_config()`. |
+| `values` | dict | `{slot_name: value}` pairs to fill. |
+| `skip_readback` | bool | `True` (default): write to `filled` (no confirmation). `False`: write to `pending` (triggers readback). |
+
+**Returns:** `{"filled": [names], "skipped": [names]}`.
+
+**Skip reasons:** A slot is skipped if it is unknown
+(not in the config), already filled, or its condition is
+not met (inactive).
+
+**Example — pre-fill from a CRM lookup:**
+
+```python
+sm = callback_context.state.get("sm", {})
+config = _compile_config(_get_config())
+fill_slots(sm, config, {
+    "guest_name": crm_record["name"],
+    "party_size": crm_record["default_party_size"],
+})
+```
+
+**Example — route through readback:**
+
+```python
+fill_slots(sm, config, {"party_size": 4},
+           skip_readback=False)
+```
+
+The value lands in `pending` and the framework shows a
+readback prompt on the next callback invocation.
+
+### 12.3 Announce Slots
+
+An **announce slot** is a framework-controlled slot that
+delivers text at a specific point in the DAG — a
+greeting, a disclosure, a mid-flow status message — and
+then fills a completion-bit (`True`) that unblocks
+downstream slots and tasks. Announce slots have no setter,
+no readback, and their value is never consumed as a task
+argument.
+
+#### Config
+
+```python
+{
+    "name": "welcome",
+    "source": "announce",
+    "message": (
+        "Welcome to Bella Notte! I'd be happy"
+        " to help you with a reservation."
+    ),
+    "preempt": False,
+}
+```
+
+| Field | Purpose |
+|---|---|
+| `source` | `"announce"` — framework-controlled, no setter. |
+| `message` | Text to deliver. Supports `{slot_name}` placeholders resolved from `filled`. |
+| `preempt` | `True` (default): deliver verbatim via `LlmResponse` (deterministic). `False`: set as `_system_message` guidance (LLM wraps in natural language). |
+| `requires` | Standard — gates on other slots. |
+| `condition` | Standard — lambda string for conditional announces. |
+
+**Validation:** Announce slots must have a `message` field
+and must NOT have a `setter`. Both are enforced by
+`_validate_config()`.
+
+#### Two Delivery Modes
+
+**Preempt (`True`)**: The callback returns
+`LlmResponse.from_parts(text=message)`. The user sees
+the exact text. Uses `force_preempt` to bypass the
+first-turn guard so welcome greetings work on the very
+first message.
+
+**Guided (`False`)**: The callback sets
+`sm["_system_message"] = message`. The LLM generates a
+natural response incorporating the guidance. Good for
+greetings where you want the LLM's personality to show.
+
+#### Cascade Behavior
+
+When the DAG evaluator returns an announce action,
+`_run_slot_filling` immediately fills the announce slot
+(`filled[name] = True`) and re-evaluates the DAG. If the
+next action is also an announce, it cascades — all
+consecutive announce slots fire in a single callback
+invocation, with their messages concatenated. The loop
+continues until a non-announce action is found
+(`fire`, `next_question`, `awaiting_readback`, or
+`all_done`).
+
+This means an announce slot followed by a user question
+delivers both the announcement and the question in a
+single response. For example, a welcome greeting
+(`preempt: False`) followed by the `party_size` question
+produces: *"Welcome to Bella Notte! I'd be happy to help
+with a reservation. How many guests will be dining?"*
+
+#### Interaction with Other Features
+
+- **Tool visibility**: Announce slots have no setter, so
+  `_compute_hidden_tools` is unaffected.
+- **Deferred readback**: Announce slots are not
+  user-sourced, so they are never deferred-eligible.
+- **Auto-confirm**: No pending values from announce slots.
+- **`_find_next_question`**: Kept as-is for deferred
+  hints (only finds user questions, not announces).
+  `_find_next_slot_action` is used for the main DAG
+  evaluation path.
+
+### 12.4 Task `requires`
+
+Tasks can declare a `requires` list of slot names that
+must be filled before the task fires, but are NOT passed
+as arguments to the tool. This separates "gates" from
+"data."
+
+```python
+{
+    "name": "BookReservation",
+    "tool": "book_reservation",
+    "inputs": ["party_size", "date", ...],
+    "requires": ["terms_disclosure"],
+    ...
+}
+```
+
+**Semantics:** Slots listed in `requires` must be filled
+(and active, per their `condition`) before the task can
+fire. Unlike `inputs`, `requires` slots are not passed
+to the tool as arguments.
+
+**Use case:** Gating a task on an announce slot (e.g., a
+terms disclosure must be delivered before booking) or on
+any slot that provides context but isn't a tool argument.
+
+**Validation:** Each name in `requires` must exist in the
+slot config, enforced by `_validate_config()`.
+
+Without task `requires`, the only way to gate a task on
+a non-argument slot is via transitive slot `requires` —
+which doesn't work when the gate comes AFTER all input
+slots are collected but BEFORE the task fires.
 
 ---
 
@@ -1082,9 +1787,17 @@ When a task fires and we know exactly what to say, the LLM adds latency and rand
 
 1. **No parallel branches.** The DAG is linear — tasks fire in order. If two tasks could fire independently (e.g., checking availability AND verifying identity simultaneously), the framework fires them one at a time.
 
-2. **No partial readback.** When pending slots exist, ALL pending values are shown in readback. You can't confirm some and leave others pending.
+2. **No partial readback within a group.** When pending
+   slots exist, ALL pending values are shown in readback.
+   You can't confirm some and leave others pending. However,
+   deferred readback (Section 7a) enables *grouped*
+   confirmation where some slots are confirmed immediately
+   and others are deferred until their group is complete.
 
-3. **Single-agent scope.** The framework manages one agent's flow. Multi-agent routing (e.g., transferring from a booking agent to a billing agent) is handled externally.
+3. **No multi-agent routing.** Multiple agents can each
+   run their own DAG with isolated state (Section 12.1),
+   but agent transfer/routing is handled externally --
+   the framework does not manage handoffs between agents.
 
 4. **No undo after confirmation.** Once values move from pending to filled via `confirm_pending`, they can't be changed (the setter is hidden). The user would need to explicitly ask to start over, which the framework doesn't support.
 

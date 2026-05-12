@@ -1,0 +1,107 @@
+{
+  "name": "b3c4d5e6-3333-4bbb-cccc-300000000003",
+  "displayName": "Readback Rejection - Inline Correction",
+  "description": "User provides party size, agent reads back, user corrects the value. Tests setter overwrite of pending value (no reject_pending needed), then re-readback and confirm.",
+  "tags": [
+    "slot-machine",
+    "readback",
+    "correction",
+    "critical"
+  ],
+  "evaluationDatasets": [
+    "Bella Notte Slot Machine - Full Suite"
+  ],
+  "golden": {
+    "turns": [
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Table for 3 please"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_SetPartySize_Called",
+              "toolCall": {
+                "tool": "set_party_size",
+                "args": {
+                  "size": 3.0
+                }
+              }
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Readback_PartySize",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "3"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Actually no, make it 4 people"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_SetPartySize_Corrected",
+              "toolCall": {
+                "tool": "set_party_size",
+                "args": {
+                  "size": 4.0
+                }
+              }
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Readback_Corrected",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "4"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Yes, that's right"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Asks_For_Date",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "date"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "evaluationExpectations": [
+      "Warm Restaurant Host Persona",
+      "No Technical Leakage"
+    ]
+  }
+}

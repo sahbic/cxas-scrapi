@@ -1,0 +1,284 @@
+{
+  "displayName": "Conditional Slot - Large Party Phone Required",
+  "description": "Party of 6 triggers the conditional large_party_phone slot. Phone is deferred (BookReservation input with readback_inputs: True), so no immediate readback. After all deferred inputs (phone, name, requests) are collected, a single combined readback fires. Verifies conditional slot activation, deferred routing, and group readback.",
+  "tags": [
+    "slot-machine",
+    "conditional-slot",
+    "large-party",
+    "deferred-readback",
+    "e2e"
+  ],
+  "evaluationDatasets": [
+    "Bella Notte Slot Machine - Full Suite"
+  ],
+  "golden": {
+    "turns": [
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Hi, I need a table for 6 people"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_SetPartySize_Called_6",
+              "toolCall": {
+                "tool": "set_party_size",
+                "args": {
+                  "size": 6.0
+                }
+              }
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Readback_PartySize",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "6"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Yes, 6 guests"
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Sure, it's 555-867-5309"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_SetLargePartyPhone_Called",
+              "toolCall": {
+                "tool": "set_large_party_phone"
+              }
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Asks_Date_No_Phone_Readback",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "date"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "July 4th"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_SetPreferredDate_Called",
+              "toolCall": {
+                "tool": "set_preferred_date"
+              }
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Readback_Date",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "July"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Yes"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_AvailableTimes_Presented",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "6:00 PM"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "6 PM is fine"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_SetSelectedTime_Called",
+              "toolCall": {
+                "tool": "set_selected_time"
+              }
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Readback_Time",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "6"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Yes"
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "The name is Thompson"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_SetGuestName_Called",
+              "toolCall": {
+                "tool": "set_guest_name"
+              }
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Asks_SpecialRequests_No_Name_Readback",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "special"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "We'll need a high chair for a toddler"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_SetSpecialRequests_Called",
+              "toolCall": {
+                "tool": "set_special_requests"
+              }
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Group_Readback_Phone",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "555"
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Group_Readback_Name",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "Thompson"
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Group_Readback_Requests",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "high chair"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Yes, that's everything"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Confirmation_Number",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "BN-"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "evaluationExpectations": [
+      "Warm Restaurant Host Persona",
+      "No Technical Leakage",
+      "Slot-Filling Flow Progression"
+    ]
+  }
+}

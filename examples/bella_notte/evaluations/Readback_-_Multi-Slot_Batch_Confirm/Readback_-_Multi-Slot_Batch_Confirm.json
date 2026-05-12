@@ -1,0 +1,88 @@
+{
+  "name": "c4d5e6f7-4444-4ccc-dddd-400000000004",
+  "displayName": "Readback - Multi-Slot Batch Confirm",
+  "description": "User provides party size and date together. Both go to pending, agent reads back both in one sentence, user confirms once to commit all. Dedicated test for batched readback.",
+  "tags": [
+    "slot-machine",
+    "readback",
+    "multi-slot",
+    "batched-confirm",
+    "critical"
+  ],
+  "evaluationDatasets": [
+    "Bella Notte Slot Machine - Full Suite"
+  ],
+  "golden": {
+    "turns": [
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "I'd like a table for 4 on June 25th"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_SetPartySize_Called",
+              "toolCall": {
+                "tool": "set_party_size",
+                "args": {
+                  "size": 4.0
+                }
+              }
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_SetPreferredDate_Called",
+              "toolCall": {
+                "tool": "set_preferred_date",
+                "args": {
+                  "date": "2026-06-25"
+                }
+              }
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_Batched_Readback",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "4"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "steps": [
+          {
+            "userInput": {
+              "text": "Yes, that's correct"
+            }
+          },
+          {
+            "expectation": {
+              "note": "Check_AvailableTimes_After_Confirm",
+              "agentResponse": {
+                "chunks": [
+                  {
+                    "text": "7:00 PM"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "evaluationExpectations": [
+      "Warm Restaurant Host Persona",
+      "Tool-Truth - Uses Exact System Values",
+      "No Technical Leakage"
+    ]
+  }
+}
