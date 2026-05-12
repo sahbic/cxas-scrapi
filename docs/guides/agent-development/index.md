@@ -77,6 +77,9 @@ Every file you see here corresponds directly to a resource on the CX Agent Studi
 `Branching Apps`
 :   How `cxas branch` lets you clone an app into a new one, enabling staging environments and safe experimentation.
 
+`Team Collaboration`
+:   The recommended Git-backed workflow for multiple developers editing the same agent, plus how to promote changes from `main` to testing to production.
+
 ---
 
 ## Quick orientation

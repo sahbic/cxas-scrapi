@@ -154,6 +154,7 @@ nav:
       - Managing Resources: guides/agent-development/managing-resources.md
       - Pull & Push Workflow: guides/agent-development/pull-push-workflow.md
       - Branching Apps: guides/agent-development/branching.md
+      - Team Collaboration: guides/agent-development/team-collaboration.md
     - Testing & Evaluation:
       - guides/evaluation/index.md
       - Platform Goldens: guides/evaluation/platform-goldens.md
