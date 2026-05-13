@@ -8,7 +8,7 @@ This guide walks you through setting up a local development environment for cont
 
 ## Prerequisites
 
-- **Python 3.10 or later** — SCRAPI supports Python 3.10, 3.11, 3.12, and 3.13.
+- **Python 3.10 or later** — SCRAPI supports Python 3.10, 3.11, 3.12, 3.13, 3.14.
 - **uv** — recommended for fast dependency management and environment isolation. [Install uv](https://docs.astral.sh/uv/getting-started/installation/).
 - **Git** — for version control.
 - **gcloud CLI** — recommended for authentication during development.
