@@ -576,9 +576,7 @@ class CXASOptimizer:
                 payload=tool_payload,
                 status=MigrationStatus.COMPILED,
             )
-            logger.info(
-                "Registered 'set_session_variables' in migration IR."
-            )
+            logger.info("Registered 'set_session_variables' in migration IR.")
         except Exception as e:
             logger.error(
                 f"Failed to register 'set_session_variables' tool: {e}"

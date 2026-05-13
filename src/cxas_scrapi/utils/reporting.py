@@ -1476,9 +1476,7 @@ def run_all_evals(
 
         if filter_files:
             golden_files = [
-                f
-                for f in golden_files
-                if os.path.basename(f) in filter_files
+                f for f in golden_files if os.path.basename(f) in filter_files
             ]
 
         for gf in golden_files:
@@ -1603,8 +1601,8 @@ def run_all_evals(
                                 c
                                 for c in cases
                                 if any(
-                                    t in filter_tags
-                                    for t in c.get("tags", []))
+                                    t in filter_tags for t in c.get("tags", [])
+                                )
                             ]
                         test_cases.extend(cases)
             if test_cases:

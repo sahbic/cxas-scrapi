@@ -606,8 +606,7 @@ class MigrationService:
                 )
             except Exception as e:
                 logger.warning(
-                    f"Failed to create Stage 1 variables optimized "
-                    f"version: {e}"
+                    f"Failed to create Stage 1 variables optimized version: {e}"
                 )
 
             # Stage 2 Optimization: Instructions & Tool Mocks
@@ -716,9 +715,7 @@ class MigrationService:
             not self.deployment_state.get("app_model_configured")
             or is_update_pass
         ):
-            default_model = (
-                self.ir.metadata.default_model or "gemini-2.5-flash"
-            )
+            default_model = self.ir.metadata.default_model or "gemini-2.5-flash"
             app_updates["model_settings"] = types.ModelSettings(
                 model=default_model
             )

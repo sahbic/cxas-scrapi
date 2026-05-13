@@ -345,7 +345,7 @@ class Common:
         channel = transport_class.create_channel(
             host=host,
             credentials=self.creds,
-            options=[("grpc.primary_user_agent", self.user_agent)]
+            options=[("grpc.primary_user_agent", self.user_agent)],
         )
 
         return transport_class(channel=channel)

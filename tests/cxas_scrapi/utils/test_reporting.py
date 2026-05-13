@@ -326,8 +326,7 @@ def test_generate_combined_report_from_dir(tmp_path):
     output_path = evals_dir / "combined_report.html"
 
     generate_combined_report_from_dir(
-        output_dir=str(evals_dir),
-        output_path=str(output_path)
+        output_dir=str(evals_dir), output_path=str(output_path)
     )
 
     assert os.path.exists(output_path)
@@ -364,9 +363,7 @@ def test_generate_combined_report_from_dir_include_all(tmp_path):
     output_path = evals_dir / "combined_report.html"
 
     generate_combined_report_from_dir(
-        output_dir=str(evals_dir),
-        output_path=str(output_path),
-        include=["all"]
+        output_dir=str(evals_dir), output_path=str(output_path), include=["all"]
     )
 
     assert os.path.exists(output_path)
@@ -404,7 +401,6 @@ def test_run_all_evals_filtering(
 
     # Mock load_golden_evals_from_yaml to return empty list
     mock_eval_utils.return_value.load_golden_evals_from_yaml.return_value = []
-
 
     run_all_evals(
         app_name="projects/p",
@@ -465,7 +461,6 @@ def test_run_all_evals_tag_filtering(
 
     mock_eval_client = mock_evaluations.return_value
     mock_eval_client.update_evaluation.return_value.name = "mock_name"
-
 
     run_all_evals(
         app_name="projects/p",

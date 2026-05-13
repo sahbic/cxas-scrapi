@@ -51,7 +51,7 @@ class Apps(Common):
 
         self.client = AgentServiceClient(
             transport=self.get_grpc_transport(AgentServiceClient),
-            client_info=self.client_info
+            client_info=self.client_info,
         )
 
     def list_apps(self) -> List[types.App]:
