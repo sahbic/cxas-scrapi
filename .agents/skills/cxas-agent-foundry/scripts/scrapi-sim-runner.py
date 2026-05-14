@@ -524,6 +524,7 @@ function jumpToRun(evalName, runIdx) {{
 
                     parsed_lines = []
                     for entry in trace:
+                        last_kind = "system"
                         for line in entry.split("\n"):
                             line = line.strip()
                             if not line:
@@ -532,19 +533,25 @@ function jumpToRun(evalName, runIdx) {{
                             if line.startswith("Agent Text (Diag):"):
                                 continue
                             elif line.startswith("Agent Text:"):
-                                parsed_lines.append(("agent", line[len("Agent Text:"):].strip()))
+                                last_kind = "agent"
+                                parsed_lines.append((last_kind, line[len("Agent Text:"):].strip()))
                             elif line.startswith("User:"):
-                                parsed_lines.append(("user", line[5:].strip()))
+                                last_kind = "user"
+                                parsed_lines.append((last_kind, line[5:].strip()))
                             elif line.startswith("Tool Call"):
-                                parsed_lines.append(("tool_call", line))
+                                last_kind = "tool_call"
+                                parsed_lines.append((last_kind, line))
                             elif line.startswith("Tool Response"):
-                                parsed_lines.append(("tool_resp", line))
+                                last_kind = "tool_resp"
+                                parsed_lines.append((last_kind, line))
                             elif line.startswith("Agent Transfer:"):
-                                parsed_lines.append(("agent_transfer", line[len("Agent Transfer:"):].strip()))
+                                last_kind = "agent_transfer"
+                                parsed_lines.append((last_kind, line[len("Agent Transfer:"):].strip()))
                             elif line.startswith("Custom Payload:"):
-                                parsed_lines.append(("custom_payload", line[len("Custom Payload:"):].strip()))
+                                last_kind = "custom_payload"
+                                parsed_lines.append((last_kind, line[len("Custom Payload:"):].strip()))
                             else:
-                                parsed_lines.append(("system", line))
+                                parsed_lines.append((last_kind, line))
 
                     merged = []
                     for kind, text in parsed_lines:
