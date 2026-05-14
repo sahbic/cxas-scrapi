@@ -6,17 +6,16 @@ Typical usage example:
 
 from __future__ import annotations
 
-# pylint: disable=bad-indentation
-
-from collections.abc import Mapping, Sequence
 import fcntl
 import pathlib
 import sys
+
+# pylint: disable=bad-indentation
+from collections.abc import Mapping, Sequence
 from typing import Any
-from absl import app
-from absl import flags
-from absl import logging
+
 import yaml
+from absl import app, flags, logging
 
 _TRANSCRIPT_FILE = flags.DEFINE_string(
     "transcript_file",

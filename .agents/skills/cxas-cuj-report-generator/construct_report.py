@@ -3,18 +3,16 @@
 from __future__ import annotations
 
 import collections
-from collections.abc import Callable, Iterator, Mapping, Sequence
 import html
 import json
 import pathlib
 import re
 import string
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import Any, TypedDict
 
-from absl import app
-from absl import flags
-from absl import logging
 import yaml
+from absl import app, flags, logging
 
 _TRANSCRIPTS_DIR = flags.DEFINE_string(
     "transcripts_dir",
