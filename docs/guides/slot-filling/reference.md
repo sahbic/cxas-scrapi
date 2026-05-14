@@ -67,6 +67,7 @@ These fields apply when `source` is `"user"` or includes `"user"` in a list.
 | `hint` | str | No | Short description for tool selection guidance. Helps the LLM pick the right setter when the user provides multiple values. |
 | `requires_readback` | bool | No | If `True`, value goes to `pending` for confirmation before `filled`. Default: `False`. |
 | `readback_fmt` | str or dict | No | How to format the value during readback. See [readback formats](#readback-formats). |
+| `response` | list[dict] | No | Rich response parts (payloads, chips) delivered alongside the slot's question. See [Rich Response Payloads](advanced.md#rich-response-payloads). |
 | `validation` | dict | No | Validation error messages, retry limits, and escalation. See [validation config](#validation-config). |
 | `validate_against` | dict | No | Cross-slot validation. See [cross-slot validation](#cross-slot-validation). |
 
@@ -86,6 +87,7 @@ These fields apply when `source` is `"announce"`.
 |-------|------|----------|-------------|
 | `message` | str | Yes | The message to deliver. Supports `{slot_name}` placeholders. |
 | `preempt` | bool | No | If `True`, message is delivered verbatim (LLM doesn't run). If `False` (default), LLM wraps it naturally. |
+| `response` | list[dict] | No | Rich response parts (payloads, cards) delivered with the announce message. See [Rich Response Payloads](advanced.md#rich-response-payloads). |
 
 ---
 
@@ -132,6 +134,7 @@ The `validation` field on a slot controls error handling and retries.
 |-------|------|----------|-------------|
 | `max_retries` | int | Yes | Maximum number of validation failures before escalation. |
 | `errors` | dict[str, str] | Yes | Maps error codes (returned by setter) to user-facing messages. Supports `{slot_name}` placeholders. |
+| `error_responses` | dict[str, list[dict]] | No | Maps error codes to rich response parts delivered alongside the error message. Keys match `errors` keys. |
 | `on_exhaust` | dict | Yes | Action when retries are exhausted. See [escalation config](#escalation-config). |
 
 ### Error code protocol
@@ -193,7 +196,9 @@ Each task is a dictionary in the `tasks` list.
 | `terminal` | bool | No | If `True`, successful completion ends the conversation. Default: `False`. |
 | `readback_inputs` | bool | No | If `True`, enables deferred readback for this task's input slots. Default: `False`. |
 | `then_say` | str | No | Message shown to the user on success. Supports `{slot_name}` placeholders resolved from `filled` and `task_results`. |
+| `then_response` | list[dict] | No | Rich response parts delivered on task success. When present, replaces `then_say` as the preemption response. Supports `{slot_name}` variable substitution. |
 | `condition` | str | No | Lambda string. Task only fires when condition is `True`. Receives `filled` dict. |
+| `channel_responses` | dict[str, list[dict]] | No | Channel-specific response overrides. Keys are channel identifiers; values replace the default `then_response` for that channel. |
 | `on_failure` | dict | No | Failure handling config. See [task failure config](#task-failure-config). |
 
 ---
@@ -326,6 +331,10 @@ All framework state lives in `callback_context.state["sm"]`. You generally don't
 | `_readback_stall` | int | Consecutive cycles with stuck readback. Resets on state change. |
 | `_progress_turns` | int | Consecutive turns with no forward progress. |
 | `_system_message` | str | Next message for the LLM (set by engine, consumed by callback). |
+| `_pending_payloads` | list[dict] | Announce-slot response parts stashed for `after_model_callback` injection. |
+| `_pending_question_payloads` | dict | Question-slot response parts with `slot` name for conditional injection. |
+| `_debug_mode` | bool | Opt-in debug logging. Set to `True` in session state to enable. |
+| `_debug_log` | list[str] | Debug log entries (visible in simulator trace). Populated when `_debug_mode` is `True`. |
 | `status` | str | `"in_progress"`, `"complete"`, or `"escalated"`. |
 
 ---

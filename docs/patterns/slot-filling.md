@@ -42,7 +42,7 @@ This is the **Slot Filling Pattern** (sometimes called the slot filling DAG fram
 <figure class="diagram">
   <!-- svg-source:excalidraw -->
   <img src="../../assets/diagrams/slot-filling-flow.svg" alt="Slot Filling Data Flow">
-  <figcaption>Data flows from the user through the LLM to setter tools, which write to <code>context.state</code>. The before_model_callback evaluates the DAG and either preempts the LLM or sets <code>_system_message</code> to guide the response.</figcaption>
+  <figcaption>Data flows from the user through the LLM to setter tools, which write to <code>context.state</code>. The before_model_callback evaluates the DAG and either preempts the LLM or sets <code>_system_message</code> to guide the response. The after_model_callback injects stashed rich payloads on non-preempted turns.</figcaption>
 </figure>
 
 ```
@@ -59,10 +59,14 @@ User ──► LLM ──► Setter Tool ──► context.state['sm']
                           ▼                            ▼
                    Fire task →               Set _system_message
                    Preempt LLM               (next question)
+                   + response parts          + stash payloads
                           │                            │
                           ▼                            ▼
                    Auto-fire result          LLM relays naturally
-                   (zero extra turns)
+                   (zero extra turns)               │
+                                                    ▼
+                                          after_model_callback
+                                          (inject stashed payloads)
 ```
 
 ---
@@ -98,9 +102,9 @@ All slot filling state lives in a single session-scoped dict named `sm`. You dec
 
 ---
 
-## The three control surfaces
+## The four control surfaces
 
-The Slot Filling Pattern has three places where you configure behavior. Getting all three right is the key to a stable agent.
+The Slot Filling Pattern has four places where you configure behavior. Getting all four right is the key to a stable agent.
 
 ### 1. Agent instruction (most critical)
 
@@ -210,6 +214,34 @@ def before_model_callback(callback_context, llm_request):
 
     return None
 ```
+
+### 4. `after_model_callback` (payload injection)
+
+When the engine doesn't preempt — the LLM generates a response — rich payloads (cards, chips) can't be included in `before_model_callback`'s return value because there is no return value. Instead, the engine stashes payloads in `sm["_pending_payloads"]` or `sm["_pending_question_payloads"]`, and the `after_model_callback` appends them to the LLM's output.
+
+```python
+def after_model_callback(callback_context, llm_response):
+    sm = callback_context.state.get("sm", {})
+
+    announce = sm.pop("_pending_payloads", None)
+    question = sm.pop("_pending_question_payloads", None)
+
+    if not announce and not question:
+        return None
+
+    # Guard: only inject on first model call per turn
+    for event in reversed(callback_context.events):
+        if event.is_user():
+            break
+        if event.is_agent() and event.parts():
+            return None
+
+    extra_parts = _extract_payload_parts(announce or question)
+    combined = list(llm_response.content.parts) + extra_parts
+    return LlmResponse.from_parts(parts=combined)
+```
+
+This callback is pure framework code — copy it unchanged from the reference implementation.
 
 ---
 
@@ -564,28 +596,14 @@ These are the failure modes encountered shipping slot-filling agents to producti
 
 ---
 
-## Mapping from Sonic YAML
-
-If you're migrating a Sonic-style agent definition to the Slot Filling Pattern:
-
-| Sonic YAML | Slot Filling equivalent |
-|---|---|
-| `type: Slot, source: user` | Setter tool + entry in `_next_question` order |
-| `type: Slot, source: task:X` | Task output written to `sm['filled']` in the callback |
-| `type: Slot, requires: [Y]` | Conditional entry in `_next_question` (check `Y` in `filled`) |
-| Task with `inputs: {a: $slot_a}` | DAG check in callback: `if 'slot_a' in sm['filled']` |
-| Task `terminal: true` | `sm['status'] = 'complete'` after task fires |
-| Slot `validation:` block | `_slot_errors` signal + error code lookup in callback |
-
----
-
 ## Reference implementation
 
 The Bella Notte restaurant reservation agent is the canonical reference implementation of this pattern. It implements:
 
-- 7 slots: `party_size`, `preferred_date`, `available_times`, `selected_time`, `guest_name`, `special_requests`, `confirmation_number`
+- 9 slots: `welcome`, `party_size`, `large_party_phone`, `preferred_date`, `available_times`, `selected_time`, `guest_name`, `special_requests`, `confirmation_number`
 - 2 tasks: `FindAvailableTimes` (fires after `party_size` + `preferred_date`), `BookReservation` (terminal, fires after all required slots)
-- 5 setter tools: `set_party_size`, `set_preferred_date`, `set_guest_name`, `set_selected_time`, `set_special_requests`
+- 6 setter tools: `set_party_size`, `set_preferred_date`, `set_guest_name`, `set_selected_time`, `set_special_requests`, `set_large_party_phone`
+- Rich response payloads: welcome cards, suggestion chips, confirmation info cards
 - 20+ golden evals, 5+ scenario evals
 
 [Build it yourself in the Restaurant Reservation Tutorial →](../tutorials/restaurant-reservation.md)

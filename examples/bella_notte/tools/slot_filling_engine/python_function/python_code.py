@@ -1,5 +1,8 @@
 """Slot-filling DAG engine — reusable across projects.
 
+FRAMEWORK CODE — shared across all agents using the slot-filling engine.
+Do not add agent-specific logic here; customize behavior via dag_config.
+
 Takes config + state dict, runs one turn of the DAG engine,
 returns an action dict. All state flows through the sm dict
 passed in and returned. CES-agnostic: no CES types, no
@@ -9,6 +12,7 @@ Called from the before_model_callback via:
   tools.slot_filling_engine({"input_data": {...}}).json()["result"]
 """
 
+import copy
 import datetime
 import random
 from typing import Any, Optional
@@ -113,6 +117,51 @@ def _resolve_exhaust_action(
         except KeyError:
           pass
     return {"name": tool, "args": raw_args}
+  return None
+
+
+def _substitute_response(
+    response: list[dict[str, Any]],
+    filled: dict[str, Any],
+) -> list[dict[str, Any]]:
+  """Recursively substitute {slot_name} in all string values."""
+  def _sub(obj):
+    if isinstance(obj, str):
+      try:
+        return obj.format(**filled)
+      except KeyError:
+        return obj
+    elif isinstance(obj, dict):
+      return {k: _sub(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+      return [_sub(v) for v in obj]
+    return obj
+  return _sub(copy.deepcopy(response))
+
+
+def _resolve_response(
+    definition: dict[str, Any], field: str, filled: dict[str, Any],
+    channel: str = "",
+) -> Optional[list[dict[str, Any]]]:
+  """Get response parts with channel override and variable substitution.
+
+  Args:
+    definition: Slot or task definition dict.
+    field: Response field name (e.g. 'response', 'then_response').
+    filled: Filled slot values for placeholder substitution.
+    channel: Optional channel for channel-specific overrides.
+
+  Returns:
+    List of response part dicts, or None if no response defined.
+  """
+  channel_field = f"channel_{field}"
+  channel_responses = definition.get(channel_field, {})
+  response = (
+      channel_responses.get(channel) if channel
+      else None
+  ) or definition.get(field)
+  if response:
+    return _substitute_response(response, filled)
   return None
 
 
@@ -717,6 +766,7 @@ def _handle_readback_stall(
     deferred: dict[str, Any],
     inv_n: int,
     hide_tools: list[str],
+    channel: str = "",
 ) -> Optional[dict[str, Any]]:
   """Detect and handle stalled readback confirmations."""
   if not pending or readback_transition or "_rejection_snapshot" in sm:
@@ -746,6 +796,9 @@ def _handle_readback_stall(
     result = {"hide_tools": hide_tools, "preempt": True, "message": msg}
     if fc:
       result["function_call"] = fc
+    resp = _resolve_response(exhaust, "response", filled, channel)
+    if resp:
+      result["response"] = resp
     return result
 
   hide_tools = _compute_hidden_tools(
@@ -754,16 +807,20 @@ def _handle_readback_stall(
   )
   next_q = _find_next_question(
       slots, filled, {}, slot_map, deferred=deferred,
+      channel=channel,
   )
   msg = next_q.get("system_message", "")
   _log_invoke(inv_n, "readback_stall_retry", filled, {}, False, hide_tools,
               asking=msg, deferred=deferred)
-  return {
+  result = {
       "hide_tools": hide_tools,
       "preempt": True,
       "force_preempt": True,
       "message": msg,
   }
+  if next_q.get("response"):
+    result["response"] = next_q["response"]
+  return result
 
 
 def _handle_progress_stall(
@@ -773,6 +830,7 @@ def _handle_progress_stall(
     deferred: dict[str, Any],
     fresh_pending: bool, hide_tools: list[str],
     inv_n: int,
+    channel: str = "",
 ) -> Optional[dict[str, Any]]:
   """Escalate after too many turns without progress."""
   if last_user_text:
@@ -795,6 +853,9 @@ def _handle_progress_stall(
   result = {"hide_tools": hide_tools, "preempt": True, "message": msg}
   if fc:
     result["function_call"] = fc
+  resp = _resolve_response(exhaust, "response", filled, channel)
+  if resp:
+    result["response"] = resp
   return result
 
 
@@ -806,6 +867,7 @@ def _handle_post_executor(
     retries: dict[str, Any], confirm_transition_prefix: str,
     inv_n: int, phase: str, fresh_pending: bool,
     hide_tools: list[str],
+    channel: str = "",
 ) -> tuple[Optional[dict[str, Any]], str]:
   """Handle task executor results and retries."""
   task_just = sm.pop("_task_just_completed", None)
@@ -831,7 +893,15 @@ def _handle_post_executor(
       _log_invoke(inv_n, phase, filled, pending, fresh_pending,
                   hide_tools, fired=task_just, preempted=task_msg,
                   deferred=deferred)
-      return {"hide_tools": [], "preempt": True, "message": task_msg}, task_msg
+      preempt_result = {
+          "hide_tools": [], "preempt": True, "message": task_msg,
+      }
+      resp = _resolve_response(
+          task_def, "then_response", filled, channel,
+      )
+      if resp:
+        preempt_result["response"] = resp
+      return preempt_result, task_msg
     return None, task_msg
 
   _log("task", name=task_just, ok=False)
@@ -854,13 +924,20 @@ def _handle_post_executor(
     }
     if fc:
       result["function_call"] = fc
+    resp = _resolve_response(exhaust, "response", filled, channel)
+    if resp:
+      result["response"] = resp
     return result, ""
   retry_msg = on_failure.get("retry_say", "Let me try again.")
   _log_invoke(inv_n, phase, filled, pending, fresh_pending,
               hide_tools, preempted=retry_msg, deferred=deferred)
-  return {
+  retry_result = {
       "hide_tools": hide_tools, "preempt": True, "message": retry_msg,
-  }, ""
+  }
+  resp = _resolve_response(on_failure, "retry_response", filled, channel)
+  if resp:
+    retry_result["response"] = resp
+  return retry_result, ""
 
 
 def _build_readback_hint(
@@ -920,6 +997,7 @@ def _build_readback(slots, pending, filled):
 
 def _find_next_question(
     slots, filled, pending, slot_map, deferred=None,
+    channel="",
 ):
   """Find the next unfilled user slot to ask about."""
   deferred = deferred or {}
@@ -940,7 +1018,15 @@ def _find_next_question(
       continue
     ask_template = slot_def.get("ask", f"Please provide {name}.")
     ask = ask_template.format(**filled)
-    return {"action": "next_question", "system_message": ask}
+    result = {
+        "action": "next_question",
+        "system_message": ask,
+        "slot_name": name,
+    }
+    response = _resolve_response(slot_def, "response", filled, channel)
+    if response:
+      result["response"] = response
+    return result
   return {
       "action": "all_done",
       "system_message": "All information collected!",
@@ -949,6 +1035,7 @@ def _find_next_question(
 
 def _find_next_slot_action(
     slots, filled, pending, slot_map, deferred=None,
+    channel="",
 ):
   """Find the next slot action (announce or user question).
 
@@ -962,6 +1049,7 @@ def _find_next_slot_action(
     pending: Dict of pending slot values.
     slot_map: Dict mapping slot name to slot definition.
     deferred: Optional dict of deferred slot values.
+    channel: Optional channel for channel-specific responses.
 
   Returns:
     Action dict with 'action' key ('announce',
@@ -997,10 +1085,15 @@ def _find_next_slot_action(
         ask = ask.format(**filled)
       except KeyError:
         pass
-      return {
+      result = {
           "action": "next_question",
           "system_message": ask,
+          "slot_name": name,
       }
+      response = _resolve_response(slot_def, "response", filled, channel)
+      if response:
+        result["response"] = response
+      return result
   return {
       "action": "all_done",
       "system_message": "All information collected!",
@@ -1009,7 +1102,7 @@ def _find_next_slot_action(
 
 def _compute_dag_state(
     tasks, slots, filled, pending, task_results, slot_map,
-    deferred=None,
+    deferred=None, channel="",
 ):
   """Evaluate the DAG to determine the next action.
 
@@ -1025,6 +1118,7 @@ def _compute_dag_state(
     task_results: Dict of task name to result.
     slot_map: Dict mapping slot name to slot definition.
     deferred: Currently deferred slot values.
+    channel: Channel identifier for channel-aware responses.
 
   Returns:
     Action dict describing the next step (fire, next_question, etc.).
@@ -1066,26 +1160,29 @@ def _compute_dag_state(
 
   return _find_next_slot_action(
       slots, filled, pending, slot_map, deferred=deferred,
+      channel=channel,
   )
 
 
-def _handle_slot_errors(sm, slots):
+def _handle_slot_errors(sm, slots, channel=""):
   """Process validation errors and manage retries.
 
   Args:
     sm: State machine dict (mutated in place).
     slots: List of slot definition dicts.
+    channel: Optional channel for channel-specific responses.
 
   Returns:
-    Tuple of (message, exhausted, function_call).
+    Tuple of (message, exhausted, function_call, response).
   """
   errors = sm.pop("_slot_errors", [])
   if not errors:
-    return None, False, None
+    return None, False, None, None
 
   retries = sm.setdefault("_retries", {})
   filled = sm.get("filled", {})
   messages = []
+  error_response = None
 
   for err in errors:
     slot_name = err["slot"]
@@ -1117,8 +1214,9 @@ def _handle_slot_errors(sm, slots):
         msg = msg.format(**filled)
       except KeyError:
         pass
+      resp = _resolve_response(exhaust, "response", filled, channel)
       _log("slot_error_exhaust", slot=slot_name)
-      return msg, True, fc
+      return msg, True, fc, resp
 
     error_messages = validation.get("errors", {})
     msg = error_messages.get(
@@ -1130,11 +1228,23 @@ def _handle_slot_errors(sm, slots):
       pass
     messages.append(msg)
 
+    if not error_response:
+      error_responses = validation.get("error_responses", {})
+      channel_error_responses = validation.get(
+          "channel_error_responses", {},
+      )
+      resp = (
+          channel_error_responses.get(channel, {}).get(error_code)
+          if channel else None
+      ) or error_responses.get(error_code)
+      if resp:
+        error_response = _substitute_response(resp, filled)
+
   if not messages:
-    return None, False, None
+    return None, False, None, None
 
   combined = " ".join(messages)
-  return combined, False, None
+  return combined, False, None, error_response
 
 
 def _compute_deferred_eligible(slots, tasks, task_results, slot_map):
@@ -1323,6 +1433,7 @@ def _run_slot_filling(
 
   slot_map = {s["name"]: s for s in slots}
   executor_tool_names = list(executors.values())
+  channel = sm.get("channel", "")
 
   sm["_invoke_n"] = sm.get("_invoke_n", 0) + 1
   inv_n = sm["_invoke_n"]
@@ -1375,7 +1486,9 @@ def _run_slot_filling(
       fresh_pending=fresh_pending, executor_tools=executor_tool_names,
   )
 
-  error_msg, _, error_fc = _handle_slot_errors(sm, slots)
+  error_msg, _, error_fc, error_resp = _handle_slot_errors(
+      sm, slots, channel=channel,
+  )
   if error_msg:
     sm["_progress_turns"] = 0
     _log_invoke(inv_n, phase, filled, pending, fresh_pending, hide_tools,
@@ -1383,6 +1496,8 @@ def _run_slot_filling(
     result = {"hide_tools": hide_tools, "preempt": True, "message": error_msg}
     if error_fc:
       result["function_call"] = error_fc
+    if error_resp:
+      result["response"] = error_resp
     return result
 
   readback_transition = sm.pop("_readback_transition", False)
@@ -1392,6 +1507,7 @@ def _run_slot_filling(
       slots, filled, slot_map,
       readback_tools, executor_tool_names,
       deferred, inv_n, hide_tools,
+      channel=channel,
   )
   if result:
     return result
@@ -1400,6 +1516,7 @@ def _run_slot_filling(
       sm, last_user_text, progress_stall,
       filled, pending, deferred,
       fresh_pending, hide_tools, inv_n,
+      channel=channel,
   )
   if result:
     return result
@@ -1408,16 +1525,18 @@ def _run_slot_filling(
       sm, tasks, task_results, filled, pending, deferred,
       retries, confirm_transition_prefix,
       inv_n, phase, fresh_pending, hide_tools,
+      channel=channel,
   )
   if result:
     return result
 
   # ── Announce slots (cascade through consecutive) ────────
   announce_msgs = []
+  announce_responses = []
   any_announce_preempt = False
   dag_result = _compute_dag_state(
       tasks, slots, filled, pending, task_results, slot_map,
-      deferred=deferred,
+      deferred=deferred, channel=channel,
   )
   while dag_result["action"] == "announce":
     slot_def_a = dag_result["slot_def"]
@@ -1429,12 +1548,15 @@ def _run_slot_filling(
       pass
     filled[name_a] = True
     announce_msgs.append(msg_a)
+    resp_a = _resolve_response(slot_def_a, "response", filled, channel)
+    if resp_a:
+      announce_responses.extend(resp_a)
     if slot_def_a.get("preempt", True):
       any_announce_preempt = True
     _log("announce", slot=name_a)
     dag_result = _compute_dag_state(
         tasks, slots, filled, pending, task_results,
-        slot_map, deferred=deferred,
+        slot_map, deferred=deferred, channel=channel,
     )
 
   # Skip task fire on inline confirm — the LLM needs to run first
@@ -1471,13 +1593,16 @@ def _run_slot_filling(
     _log_invoke(inv_n, phase, filled, pending, fresh_pending,
                 hide_tools, fired=task_name_f, deferred=deferred)
     fire_hide = [t for t in hide_tools if t != tool_name]
-    return {
+    fire_result = {
         "hide_tools": fire_hide,
         "preempt": True,
         "force_preempt": any_announce_preempt,
         "function_call": {"name": tool_name, "args": args},
         "message": combined_msg,
     }
+    if announce_responses:
+      fire_result["response"] = announce_responses
+    return fire_result
 
   msg = task_msg or dag_result.get("system_message", "")
   if announce_msgs:
@@ -1519,6 +1644,7 @@ def _run_slot_filling(
   if fresh_deferred and not pending:
     next_q = _find_next_question(
         slots, filled, pending, slot_map, deferred=deferred,
+        channel=channel,
     )
     next_msg = next_q.get("system_message", "")
     if next_msg:
@@ -1535,7 +1661,12 @@ def _run_slot_filling(
       promoted_from_deferred, deferred_hint,
   )
 
-  return {
+  combined_response = announce_responses or []
+  dag_response = dag_result.get("response")
+  if dag_response:
+    combined_response = combined_response + dag_response
+
+  final = {
       "hide_tools": hide_tools,
       "preempt": preempt,
       "force_preempt": any_announce_preempt or inline_confirmed,
@@ -1543,6 +1674,26 @@ def _run_slot_filling(
       "si_suffix": si_suffix,
       "inline_confirmed": inline_confirmed,
   }
+  if preempt and combined_response:
+    final["response"] = combined_response
+    _log("payload_route", path="preempt_dispatch",
+         n_parts=len(combined_response))
+  else:
+    if announce_responses:
+      sm["_pending_payloads"] = announce_responses
+      _log("payload_route", path="stash_announce",
+           n_parts=len(announce_responses))
+    if dag_response:
+      sm["_pending_question_payloads"] = {
+          "slot": dag_result.get("slot_name"),
+          "parts": dag_response,
+      }
+      _log("payload_route", path="stash_question",
+           slot=dag_result.get("slot_name"),
+           n_parts=len(dag_response))
+    if not announce_responses and not dag_response:
+      _log("payload_route", path="none")
+  return final
 
 
 # ═════════════════════════════════════════════════════════════════════

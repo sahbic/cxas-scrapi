@@ -1,5 +1,8 @@
 """After-tool callback — setter and executor tool state management.
 
+FRAMEWORK CODE — shared across all agents using the slot-filling engine.
+Do not add agent-specific logic here; customize behavior via dag_config.
+
 Pure framework callback with no agent-specific knowledge. Reads config
 from sm (populated by before_model_callback from _get_config()):
   _setter_slots:    tool name → slot name mapping

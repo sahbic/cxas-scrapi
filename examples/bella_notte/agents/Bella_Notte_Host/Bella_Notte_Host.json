@@ -11,6 +11,10 @@
     "pythonCode": "agents/Bella_Notte_Host/before_model_callbacks/before_model_callbacks_01/python_code.py",
     "description": "DAG Evaluator"
   }],
+  "afterModelCallbacks": [{
+    "pythonCode": "agents/Bella_Notte_Host/after_model_callbacks/after_model_callbacks_01/python_code.py",
+    "description": "Payload injection for non-preempted turns"
+  }],
   "afterToolCallbacks": [{
     "pythonCode": "agents/Bella_Notte_Host/after_tool_callbacks/after_tool_callbacks_01/python_code.py",
     "description": "Setter state management"

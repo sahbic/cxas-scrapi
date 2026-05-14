@@ -307,6 +307,126 @@ The engine never preempts on the very first turn of a conversation. This lets th
 
 ---
 
+## Rich Response Payloads
+
+The framework can deliver **rich response parts** — info cards, suggestion chips, description panels — alongside the LLM's text output. These are declared in `dag_config` and delivered automatically.
+
+### Where response fields go
+
+| Config location | Field | When delivered |
+|----------------|-------|---------------|
+| Slot definition | `response` | When the slot's question is asked |
+| Announce slot | `response` | When the announce message is delivered |
+| Task definition | `then_response` | When the task succeeds |
+| Validation errors | `error_responses` | When a specific error code fires |
+
+### Response part format
+
+Each response part is a dictionary with a `type` field:
+
+```python
+"response": [
+    {"type": "text", "text": "Welcome! How can I help?"},
+    {"type": "payload", "data": {
+        "richContent": [[{
+            "type": "info",
+            "title": "Bella Notte",
+            "subtitle": "Restaurant Reservations",
+        }]],
+    }},
+]
+```
+
+| Type | Description |
+|------|-------------|
+| `text` | Plain text part. Delivered as `Part.from_text()`. |
+| `payload` | Structured payload (cards, chips). Delivered as `Part.from_json()`. |
+| `audio` | Audio URI. Delivered as `Part.from_audio()`. |
+| `end_session` | Ends the session. Delivered as `Part.from_end_session()`. |
+| `transfer` | Transfers to another agent. Delivered as `Part.from_agent_transfer()`. |
+
+### Two delivery paths
+
+Response parts take different paths depending on whether the engine preempts:
+
+```
+                     ┌─────────────┐
+                     │  dag_config │
+                     │  response   │
+                     └──────┬──────┘
+                            │
+                   ┌────────┴────────┐
+                   │                 │
+              Preempted?         Not preempted
+                   │                 │
+           ┌──────┴──────┐   ┌──────┴──────┐
+           │before_model  │   │  Engine     │
+           │builds Parts  │   │  stashes in │
+           │and returns   │   │  sm state   │
+           │LlmResponse   │   └──────┬──────┘
+           └─────────────┘          │
+                              ┌──────┴──────┐
+                              │after_model   │
+                              │reads stash,  │
+                              │appends Parts │
+                              │to LLM output │
+                              └─────────────┘
+```
+
+**Preempted turns** (validation errors, readback transitions, task execution): The `before_model_callback` builds CES `Part` objects directly from the response list and returns them as an `LlmResponse`.
+
+**Non-preempted turns** (first question, LLM-generated responses): The engine stashes response parts in `sm["_pending_payloads"]` or `sm["_pending_question_payloads"]`. The `after_model_callback` reads the stash and appends the parts to the LLM's output.
+
+### Question payload injection
+
+For user-sourced slots, question payloads are only injected when:
+
+1. There are no announce payloads in the same turn (announce takes priority)
+2. The target slot is still unfilled (the LLM didn't call the setter in this response)
+
+This prevents duplicate chips when the user answers a question before seeing the chips.
+
+### Variable substitution
+
+Response parts support `{slot_name}` placeholders, resolved from `filled` values:
+
+```python
+"then_response": [
+    {"type": "text", "text": "Confirmed! #{confirmation_number}"},
+    {"type": "payload", "data": {
+        "richContent": [[{
+            "type": "info",
+            "title": "Reservation Confirmed",
+            "subtitle": "#{confirmation_number}",
+            "text": "{party_size} guests on {preferred_date}",
+        }]],
+    }},
+]
+```
+
+### Channel-aware responses
+
+Use `channel_responses` on tasks to deliver different payloads per channel:
+
+```python
+"channel_responses": {
+    "web": [
+        {"type": "payload", "data": {"richContent": [[...]]}},
+    ],
+    "voice": [
+        {"type": "text", "text": "Your confirmation number is..."},
+    ],
+},
+```
+
+The engine checks `sm.get("channel", "")` against the keys. If a matching channel is found, that response replaces the default `then_response`.
+
+### Multi-model-call guard
+
+The `after_model_callback` includes a guard to prevent duplicate payload injection. It checks for any prior agent output in the current turn — if the agent already produced text, tool calls, or payloads, the callback skips injection. This handles scenarios where the LLM makes multiple model calls in a single turn (e.g., calling a setter then generating text).
+
+---
+
 ## Stall detection
 
 The framework includes two safety nets for conversations that get stuck:

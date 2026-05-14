@@ -1,4 +1,8 @@
-"""Tool to discard pending slot values after user rejects readback."""
+"""Tool to discard pending slot values after user rejects readback.
+
+FRAMEWORK CODE — shared across all agents using the slot-filling engine.
+Do not add agent-specific logic here; customize behavior via dag_config.
+"""
 
 from typing import Any
 

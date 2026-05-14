@@ -1,5 +1,8 @@
 """Before-model callback — thin CES adapter for the slot-filling engine.
 
+FRAMEWORK CODE — shared across all agents using the slot-filling engine.
+Do not add agent-specific logic here; customize behavior via dag_config.
+
 Calls the slot_filling_engine tool to compute the next action, then
 applies CES-specific operations: tool visibility, system instruction
 manipulation, and preemption.
@@ -8,6 +11,7 @@ Config is loaded from dag_config; engine logic lives in
 slot_filling_engine. This callback is pure CES glue.
 """
 
+import json as json_lib
 import re
 from typing import Optional
 
@@ -101,7 +105,7 @@ def before_model_callback(  # pylint: disable=undefined-variable
         {},
     ).json()["result"]
 
-  # ── Debug mode (opt-in via state variable) ──────────────────
+  # ── Debug mode (opt-in via sm._debug_mode state variable) ──
   debug = sm.get("_debug_mode", False)
 
   # ── Extract last user text ──────────────────────────────────
@@ -127,13 +131,12 @@ def before_model_callback(  # pylint: disable=undefined-variable
       }},
   ).json()["result"]
 
-  if debug:
-    callback_context.state["_debug_log"] = engine_result.get(
-        "_debug_log", [],
-    )
-
   result = engine_result["action"]
   sm = engine_result["sm"]
+
+  if debug:
+    sm["_debug_log"] = engine_result.get("_debug_log", [])
+
   callback_context.state["sm"] = sm
 
   # ── Clear prompt variables on completion ────────────────────
@@ -195,7 +198,34 @@ def before_model_callback(  # pylint: disable=undefined-variable
       and llm_request.contents
       and (len(llm_request.contents) > 1 or result.get("force_preempt"))):
     parts = []
-    if result.get("message"):
+    response_parts = result.get("response")
+    if response_parts:
+      for rp in response_parts:
+        rp_type = rp.get("type", "text")
+        if rp_type == "text":
+          parts.append(Part.from_text(  # pylint: disable=undefined-variable
+              text=rp.get("text", ""),
+          ))
+        elif rp_type == "payload":
+          parts.append(Part.from_json(  # pylint: disable=undefined-variable
+              json_lib.dumps(rp["data"]),
+          ))
+        elif rp_type == "audio":
+          parts.append(Part.from_audio(  # pylint: disable=undefined-variable
+              audio_uri=rp["uri"],
+              cancellable=rp.get("cancellable", False),
+              interruptible=rp.get("interruptible", True),
+          ))
+        elif rp_type == "end_session":
+          parts.append(Part.from_end_session(  # pylint: disable=undefined-variable
+              reason=rp.get("reason", "completed"),
+              escalated=rp.get("escalated", False),
+          ))
+        elif rp_type == "transfer":
+          parts.append(Part.from_agent_transfer(  # pylint: disable=undefined-variable
+              agent=rp["agent"],
+          ))
+    elif result.get("message"):
       parts.append(Part.from_text(  # pylint: disable=undefined-variable
           text=result["message"],
       ))

@@ -1,5 +1,8 @@
 """Before-agent callback — pure framework, no agent-specific content.
 
+FRAMEWORK CODE — shared across all agents using the slot-filling engine.
+Do not add agent-specific logic here; customize behavior via dag_config.
+
 Runs ONCE per user turn, BEFORE static variable substitution.
 
 Sets three static variables that instruction.txt references:

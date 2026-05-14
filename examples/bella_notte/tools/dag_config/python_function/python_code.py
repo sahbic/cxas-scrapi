@@ -15,6 +15,22 @@ def dag_config() -> dict[str, Any]:
                   " to help you with a reservation."
               ),
               "preempt": False,
+              "response": [
+                  {"type": "text", "text": (
+                      "Welcome to Bella Notte! I'd be happy"
+                      " to help you with a reservation."
+                  )},
+                  {"type": "payload", "data": {
+                      "richContent": [[{
+                          "type": "info",
+                          "title": "Bella Notte",
+                          "subtitle": (
+                              "Welcome! I'd be happy to help"
+                              " you with a reservation."
+                          ),
+                      }]],
+                  }},
+              ],
           },
           {
               "name": "party_size",
@@ -29,6 +45,19 @@ def dag_config() -> dict[str, Any]:
                   "other": "guests",
               },
               "requires_readback": True,
+              "response": [
+                  {"type": "payload", "data": {
+                      "richContent": [[
+                          {"type": "chips", "options": [
+                              {"text": "2"},
+                              {"text": "3"},
+                              {"text": "4"},
+                              {"text": "5"},
+                              {"text": "6"},
+                          ]},
+                      ]],
+                  }},
+              ],
               "validation": {
                   "max_retries": 3,
                   "errors": {
@@ -42,6 +71,25 @@ def dag_config() -> dict[str, Any]:
                           "I didn't catch the number of"
                           " guests. How many will be dining?"
                       ),
+                  },
+                  "error_responses": {
+                      "out_of_range": [
+                          {"type": "text", "text": (
+                              "We accept reservations for"
+                              " parties of 1 to 8."
+                          )},
+                          {"type": "payload", "data": {
+                              "richContent": [[
+                                  {"type": "chips", "options": [
+                                      {"text": "2"},
+                                      {"text": "3"},
+                                      {"text": "4"},
+                                      {"text": "5"},
+                                      {"text": "6"},
+                                  ]},
+                              ]],
+                          }},
+                      ],
                   },
                   "on_exhaust": {
                       "say": (
@@ -172,6 +220,25 @@ def dag_config() -> dict[str, Any]:
                   " {available_times}. Which time"
                   " works best for you?"
               ),
+              "response": [
+                  {"type": "text", "text": (
+                      "We have availability at"
+                      " {available_times}. Which time"
+                      " works best for you?"
+                  )},
+                  {"type": "payload", "data": {
+                      "richContent": [[{
+                          "type": "description",
+                          "title": (
+                              "Available times for"
+                              " {preferred_date}"
+                          ),
+                          "text": [
+                              "{available_times}",
+                          ],
+                      }]],
+                  }},
+              ],
               "readback_fmt": "time",
               "requires_readback": True,
               "validation": {
@@ -339,6 +406,31 @@ def dag_config() -> dict[str, Any]:
                   " forward to welcoming you to"
                   " Bella Notte!"
               ),
+              "then_response": [
+                  {"type": "text", "text": (
+                      "Your reservation is confirmed."
+                      " Your confirmation number is"
+                      " {confirmation_number}. We look"
+                      " forward to welcoming you to"
+                      " Bella Notte!"
+                  )},
+                  {"type": "payload", "data": {
+                      "richContent": [[{
+                          "type": "info",
+                          "title": "Reservation Confirmed",
+                          "subtitle": (
+                              "Confirmation"
+                              " #{confirmation_number}"
+                          ),
+                          "text": (
+                              "{party_size} guests on"
+                              " {preferred_date} at"
+                              " {selected_time} under"
+                              " {guest_name}"
+                          ),
+                      }]],
+                  }},
+              ],
               "on_failure": {
                   "retry_say": (
                       "I'm having a bit of trouble"

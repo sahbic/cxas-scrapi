@@ -22,7 +22,7 @@ Make sure you have:
 
 ## The app structure
 
-A slot-filling agent uses three framework components that you copy into your app, plus agent-specific configuration and setter tools that you write yourself:
+A slot-filling agent uses four framework callbacks that you copy into your app, plus agent-specific configuration and setter tools that you write yourself:
 
 ```
 cxas_app/Bella Notte/
@@ -33,6 +33,8 @@ cxas_app/Bella Notte/
 │   │   └── before_agent_callbacks_01/python_code.py    # Framework (copy)
 │   ├── before_model_callbacks/
 │   │   └── before_model_callbacks_01/python_code.py    # Framework (copy)
+│   ├── after_model_callbacks/
+│   │   └── after_model_callbacks_01/python_code.py     # Framework (copy)
 │   └── after_tool_callbacks/
 │       └── after_tool_callbacks_01/python_code.py      # Framework (copy)
 ├── tools/
@@ -45,7 +47,7 @@ cxas_app/Bella Notte/
 │   └── end_session/...                                 # Platform built-in
 ```
 
-The three callbacks, the engine tool, and the confirm/reject tools are **framework code** — you copy them unchanged into every slot-filling agent. The `dag_config` tool and the setter tools are **your code** — you write them for each agent.
+The four callbacks, the engine tool, and the confirm/reject tools are **framework code** — you copy them unchanged into every slot-filling agent. The `dag_config` tool and the setter tools are **your code** — you write them for each agent.
 
 !!! tip "Framework files"
     The framework files (engine, callbacks, confirm/reject) are available in the `examples/bella_notte/` directory of the SCRAPI repository. Copy them into your app and they work as-is.
