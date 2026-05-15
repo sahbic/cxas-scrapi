@@ -415,3 +415,69 @@ tests:
       value: false
     - path: "$.result.action.function_call"
       operator: is_null
+
+# ═══════════════════════════════════════════════════════════════════
+# INLINE CONFIRM — defers task fire
+# ═══════════════════════════════════════════════════════════════════
+
+- name: inline_confirm_defers_task_fire
+  tool: slot_filling_engine
+  args:
+    input_data:
+      raw_config: *config
+      sm:
+        _events_checked: true
+        filled:
+          welcome: true
+          party_size: 4
+        pending:
+          preferred_date: "2027-06-01"
+        _last_state:
+          filled:
+            welcome: true
+            party_size: 4
+          pending:
+            preferred_date: "2027-06-01"
+          deferred: {}
+      last_user_text: "Yea, also I was wondering if an evening time is available"
+  expectations:
+    response:
+    - path: "$.result.action.inline_confirmed"
+      operator: equals
+      value: true
+    - path: "$.result.action.function_call"
+      operator: is_null
+    - path: "$.result.sm.filled.preferred_date"
+      operator: equals
+      value: "2027-06-01"
+
+# ═══════════════════════════════════════════════════════════════════
+# AUTO CONFIRM — next turn doesn't re-readback confirmed values
+# ═══════════════════════════════════════════════════════════════════
+
+- name: auto_confirm_no_rereadback
+  tool: slot_filling_engine
+  args:
+    input_data:
+      raw_config: *config
+      sm:
+        _events_checked: true
+        filled:
+          welcome: true
+          party_size: 4
+        pending: {}
+        _last_state:
+          filled:
+            welcome: true
+          pending:
+            party_size: 4
+          deferred: {}
+        _readback_transition: true
+      last_user_text: ""
+  expectations:
+    response:
+    - path: "$.result.action.si_suffix"
+      operator: is_not_null
+    - path: "$.result.action.message"
+      operator: contains
+      value: "What date"

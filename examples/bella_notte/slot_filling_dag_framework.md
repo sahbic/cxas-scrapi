@@ -118,8 +118,10 @@ Key properties:
 | `success_check` | Key in the result dict that must be truthy for the task to count as successful. |
 | `terminal` | If `True`, successful completion ends the conversation (sets `status = "complete"`). |
 | `readback_inputs` | Defer slot readback to grouped confirmation (7a). |
-| `then_say` | Message template shown on success. Supports `{slot_name}` placeholders. |
+| `then_say` | Message template shown on success. Supports `{slot_name}` placeholders from filled slots AND `{key}` placeholders from the task's result dict. For example, if the task tool returns `{"success": True, "symbolName": "Apple Inc.", "lastTradeValue": "$180.00"}`, you can write `"then_say": "{symbolName} is trading at {lastTradeValue}."`. See Section 12.5. |
+| `then_response` | Structured response list for channel-aware payloads. Same substitution rules as `then_say` — both filled slots and task result keys are available. See Section 12.5. |
 | `condition` | Optional lambda string compiled to a callable. When present, the task only fires if the condition returns `True`. Inactive tasks are skipped during DAG evaluation. Same compilation as slot conditions. |
+| `on_complete` | Optional dict with `clear_slots` (list of slot names). When present on a terminal task, after success the engine clears the specified slots, removes the task result, and resets `status` to `"in_progress"` — enabling conversation restart. See Section 12.6. |
 | `on_failure` | Retry and escalation configuration (see Section 5). |
 
 ### 2.3 The DAG
@@ -1376,12 +1378,43 @@ instruction directives and logging.
 |----------|-----------|----------------|
 | Announce slot | `message` | `response` |
 | User slot (ask) | `ask` | `response` |
-| Task success | `then_say` | `then_response` |
+| Readback confirmation | (generated) | `readback_response` (top-level) |
+| Task success (terminal) | `then_say` | `then_response` |
+| Task success (non-terminal) | `then_say` | `then_response` |
 | Task retry | `retry_say` | `retry_response` |
 | Task exhaust | `on_exhaust.say` | `on_exhaust.response` |
 | Validation error | `errors[code]` | `error_responses[code]` |
 | Readback exhaust | `on_exhaust.say` | `on_exhaust.response` |
 | Progress exhaust | `on_exhaust.say` | `on_exhaust.response` |
+
+### Readback Confirmation Response
+
+When the engine generates a readback prompt ("Just to confirm —
+3 guests, on June 15th. Is that correct?"), you can attach
+payloads via a top-level `readback_response` config field. This
+is useful for showing a summary card or confirm/reject chips
+during readback.
+
+```python
+{
+    "readback_response": [
+        {"type": "payload", "data": {
+            "richContent": [[
+                {"type": "chips", "options": [
+                    {"text": "Confirm"},
+                    {"text": "Change something"},
+                ]},
+            ]],
+        }},
+    ],
+}
+```
+
+The response supports `{slot_name}` substitution from both
+filled and pending values (since pending values are what the
+readback is confirming). Delivery uses the unconditional stash
+path (`sm["_pending_payloads"]`), so the after_model_callback
+injects the payload alongside the LLM's natural readback text.
 
 ### Channel-Aware Responses
 
@@ -1486,6 +1519,10 @@ This means payloads are delivered at these moments:
 
 On non-preempted turns, payloads are delivered via the
 **after_model_callback injection** path (see below).
+
+Non-terminal task `then_response` and readback `readback_response`
+payloads are always stashed to `sm["_pending_payloads"]` (since
+the LLM runs after both) and injected by the after_model_callback.
 
 **CES output format:** CES maps `Part.from_text()` to
 `output.text` and `Part.from_json()` to `output.payload`.
@@ -1764,28 +1801,36 @@ like `"user"` remain backward compatible.
 
 Event pre-fill runs inside `slot_filling_engine`, after
 config compilation but before DAG evaluation. It runs
-once per session (guarded by `sm["_events_checked"]`):
+on **every engine call** — no persistent guard is needed
+because `fill_slots()` is idempotent for already-filled
+slots (it returns `"skipped"` and moves on):
 
 ```python
-if not sm.get("_events_checked"):
-    event_data = callback_context.state.get("event_data", {})
-    if event_data:
-        event_values = {}
-        for slot_def in config["slots"]:
-            if "event" not in _normalize_sources(
-                slot_def.get("source", "user"),
-            ):
-                continue
-            key = slot_def.get("event_key", slot_def["name"])
-            value = event_data.get(key)
-            if value is not None:
-                event_values[slot_def["name"]] = value
-        if event_values:
-            result = fill_slots(sm, config, event_values)
-            if result["filled"]:
-                sm["_event_prefilled_this_turn"] = True
-    sm["_events_checked"] = True
+if event_data:
+    event_values = {}
+    for slot_def in config["slots"]:
+        if "event" not in _normalize_sources(
+            slot_def.get("source", "user"),
+        ):
+            continue
+        key = slot_def.get("event_key", slot_def["name"])
+        value = event_data.get(key)
+        if value is not None:
+            event_values[slot_def["name"]] = value
+    if event_values:
+        result = fill_slots(sm, config, event_values)
+        if result["filled"]:
+            sm["_event_prefilled_this_turn"] = True
 ```
+
+> **Why no guard?** An earlier version used an
+> `_events_checked` flag to run event processing only once.
+> This caused a bug: when new events arrived on later turns
+> (e.g., button presses injected as `ia_event_name`), the
+> flag was already `True` and the events were silently
+> ignored. Since `fill_slots()` skips already-filled slots,
+> re-processing the same event data is a no-op, making
+> the guard unnecessary.
 
 Event pre-fill uses `fill_slots()` (Section 12.2) with
 `skip_readback=True` (the default), writing trusted event
@@ -2045,6 +2090,174 @@ Without task `requires`, the only way to gate a task on
 a non-argument slot is via transitive slot `requires` —
 which doesn't work when the gate comes AFTER all input
 slots are collected but BEFORE the task fires.
+
+### 12.5 Task Result Substitution in `then_say` / `then_response`
+
+By default, `then_say` and `then_response` templates
+substitute from filled slots. Task result substitution
+extends this: the task tool's return dict is merged into
+the substitution context, so templates can reference
+**both** filled slots and task result keys.
+
+```python
+{
+    "name": "FulfillQuote",
+    "tool": "fulfill_quote",
+    "inputs": ["action", "symbol"],
+    "terminal": True,
+    "then_say": "As of {quoteDate}, {symbolName} ({symbol}) is trading at {lastTradeValue}.",
+}
+```
+
+Here `symbol` comes from filled slots, while `quoteDate`,
+`symbolName`, and `lastTradeValue` come from the
+`fulfill_quote` tool's return dict (e.g.,
+`{"success": True, "quoteDate": "2024-01-15",
+"symbolName": "Apple Inc.", "lastTradeValue": "$180.00"}`).
+
+The same substitution applies to `then_response` payloads:
+
+```python
+{
+    "name": "FulfillQuote",
+    "tool": "fulfill_quote",
+    "inputs": ["action", "symbol"],
+    "terminal": True,
+    "then_response": [
+        {"type": "payload", "data": {
+            "text": "{symbolName} ({symbol}) is {upDownPercent}, "
+                    "trading at {lastTradeValue}.",
+        }},
+    ],
+}
+```
+
+**Implementation:** In `_handle_post_executor()`, after
+a successful task, the engine builds
+`sub_context = {**filled, **result}` and uses it for
+both `then_say` format and `_resolve_response()` calls.
+If a key exists in both `filled` and `result`, the task
+result takes precedence (dict merge order).
+
+### 12.6 DAG Restart via `on_complete`
+
+By default, when a terminal task succeeds, the engine
+sets `status = "complete"` and the conversation ends.
+The `on_complete` field enables **conversation restart**
+— after a terminal task completes, specified slots are
+cleared and the DAG resets to `"in_progress"`, ready
+for the next query.
+
+```python
+{
+    "name": "FulfillQuote",
+    "tool": "fulfill_quote",
+    "inputs": ["action", "symbol"],
+    "condition": "lambda filled: filled.get('action') == 'Quote'",
+    "terminal": True,
+    "then_say": "{symbolName} is trading at {lastTradeValue}.",
+    "on_complete": {
+        "clear_slots": ["action", "symbol"],
+    },
+}
+```
+
+**Behavior:** After the task succeeds and `then_say` is
+delivered:
+
+1. Each slot in `clear_slots` is removed from `filled`.
+2. The task's result entry is removed from
+   `sm["_task_results"]`.
+3. `sm["status"]` is reset to `"in_progress"`.
+4. `sm["_events_checked"]` is reset to `False` (allowing
+   event re-processing if applicable).
+
+The DAG re-enters collection mode and asks for the next
+unfilled slot. If the user provides new values (e.g.,
+"what about MSFT?"), the same or a different conditional
+task can fire.
+
+**Use case:** Multi-action flows where the user can
+perform several operations in one session (e.g., get a
+stock quote, then a rating, then set a price alert).
+Each action is a conditional terminal task with
+`on_complete` clearing the action-specific slots.
+
+**Without `on_complete`:** The task sets
+`status = "complete"` and the conversation freezes. The
+user cannot start a new query without a new session.
+
+### 12.7 Event Mappings: CES Event Name → Slot Values
+
+CES UI elements (buttons, cards) can fire named events
+(e.g., `alert_last_price`, `alert_bid_price`). The
+`event_mappings` config maps these event names to slot
+values, keeping business logic out of callbacks.
+
+#### Config syntax
+
+Add `event_mappings` at the top level of your DAG config:
+
+```python
+{
+    "slots": [...],
+    "tasks": [...],
+    "event_mappings": {
+        "alert_last_price": {"alert_price_type": "last"},
+        "alert_bid_price": {"alert_price_type": "bid"},
+        "alert_ask_price": {"alert_price_type": "ask"},
+        "alert_rises_above": {"alert_price_direction": "rises above"},
+        "alert_drops_below": {"alert_price_direction": "drops below"},
+    },
+}
+```
+
+When the engine receives `event_data` with an
+`ia_event_name` key matching one of the mapping entries,
+the mapped slot values are injected into `event_data`
+before normal event pre-fill processing.
+
+#### Callback passthrough
+
+The standard `before_model_callback` passes
+`ia_event_name` through `event_data` so the engine can
+process it:
+
+```python
+event_data = callback_context.state.get("event_data", {})
+ia_event = callback_context.state.get("ia_event_name")
+if ia_event:
+    event_data["ia_event_name"] = ia_event
+```
+
+This is framework-level code (not agent-specific) and is
+already included in the standard `before_model_callback`.
+
+#### How it works
+
+In `slot_filling_engine()`, before event pre-fill:
+
+1. Read `event_mappings` from the compiled config.
+2. Check for `ia_event_name` in `event_data`.
+3. If a match is found, merge the mapped values into
+   `event_data`.
+4. Normal event pre-fill then processes the enriched
+   `event_data`, writing matched values to `filled`.
+
+Unmatched event names are ignored — the engine falls
+through to normal slot collection.
+
+#### Declaring `ia_event_name` in `app.json`
+
+CES only exposes declared variables. Add to
+`variableDeclarations`:
+
+```json
+{
+    "name": "ia_event_name",
+    "schema": {"type": "STRING", "default": ""}
+}
+```
 
 ---
 

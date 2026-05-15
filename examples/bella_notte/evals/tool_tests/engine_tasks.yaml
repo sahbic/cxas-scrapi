@@ -570,3 +570,462 @@ tests:
     - path: "$.result.action.si_suffix"
       operator: contains
       value: "MUST confirm ALL"
+
+# ═══════════════════════════════════════════════════════════════════
+# CONDITIONAL SLOT LIFECYCLE — deactivation from pending/deferred
+# ═══════════════════════════════════════════════════════════════════
+
+- name: conditional_slot_deactivation_from_pending
+  tool: slot_filling_engine
+  args:
+    input_data:
+      raw_config: *config
+      sm:
+        _events_checked: true
+        filled:
+          welcome: true
+          party_size: 3
+        pending:
+          large_party_phone: "555-1234"
+        _last_state:
+          filled:
+            welcome: true
+            party_size: 5
+          pending:
+            large_party_phone: "555-1234"
+          deferred: {}
+      last_user_text: ""
+  expectations:
+    response:
+    - path: "$.result.sm.pending.large_party_phone"
+      operator: is_null
+
+- name: conditional_slot_deactivation_from_deferred
+  tool: slot_filling_engine
+  args:
+    input_data:
+      raw_config: *config
+      sm:
+        _events_checked: true
+        filled:
+          welcome: true
+          party_size: 3
+        pending: {}
+        deferred:
+          large_party_phone: "555-1234"
+        _last_state:
+          filled:
+            welcome: true
+            party_size: 5
+          pending: {}
+          deferred:
+            large_party_phone: "555-1234"
+      last_user_text: ""
+  expectations:
+    response:
+    - path: "$.result.sm.deferred.large_party_phone"
+      operator: is_null
+
+# ═══════════════════════════════════════════════════════════════════
+# ANNOUNCE SLOT — three-deep cascade
+# ═══════════════════════════════════════════════════════════════════
+
+- name: announce_cascade_three_deep
+  tool: slot_filling_engine
+  args:
+    input_data:
+      raw_config:
+        slots:
+        - name: greeting
+          source: announce
+          message: "Hello!"
+          preempt: false
+        - name: hours
+          source: announce
+          message: "Open 5-10pm."
+          preempt: false
+        - name: notice
+          source: announce
+          message: "No walk-ins today."
+          preempt: false
+        - name: party_size
+          source: user
+          setter: set_party_size
+          hint: "Party size"
+          ask: "How many guests?"
+          readback_fmt:
+            type: plural
+            one: guest
+            other: guests
+          requires_readback: true
+        tasks: []
+        confirm_transition_prefix: ""
+        readback_retry:
+          max_retries: 2
+          on_exhaust:
+            say: "Please call."
+            then: escalate
+        progress_stall:
+          max_turns: 4
+          on_exhaust:
+            say: "Please call."
+            then: escalate
+      sm:
+        _events_checked: true
+        filled: {}
+        pending: {}
+        _last_state:
+          filled: {}
+          pending: {}
+          deferred: {}
+      last_user_text: ""
+  expectations:
+    response:
+    - path: "$.result.sm.filled.greeting"
+      operator: equals
+      value: true
+    - path: "$.result.sm.filled.hours"
+      operator: equals
+      value: true
+    - path: "$.result.sm.filled.notice"
+      operator: equals
+      value: true
+    - path: "$.result.action.message"
+      operator: contains
+      value: "Hello!"
+    - path: "$.result.action.message"
+      operator: contains
+      value: "Open 5-10pm."
+    - path: "$.result.action.message"
+      operator: contains
+      value: "No walk-ins today."
+    - path: "$.result.action.message"
+      operator: contains
+      value: "How many guests?"
+
+# ═══════════════════════════════════════════════════════════════════
+# TASK WITH CONDITION — false prevents firing
+# ═══════════════════════════════════════════════════════════════════
+
+- name: task_with_condition_false
+  tool: slot_filling_engine
+  args:
+    input_data:
+      raw_config:
+        slots:
+        - name: party_size
+          source: user
+          setter: set_party_size
+          hint: "Party size"
+          ask: "How many guests?"
+          readback_fmt:
+            type: plural
+            one: guest
+            other: guests
+          requires_readback: true
+        - name: vip_code
+          source: user
+          setter: set_vip_code
+          hint: "VIP code"
+          ask: "Enter VIP code."
+          requires_readback: true
+        tasks:
+        - name: CheckVIP
+          tool: check_vip
+          condition: "lambda filled: int(filled.get('party_size', 0)) >= 10"
+          inputs: ["vip_code"]
+          outputs: {}
+          success_check: success
+          then_say: "VIP confirmed."
+        confirm_transition_prefix: ""
+        readback_retry:
+          max_retries: 2
+          on_exhaust:
+            say: "Please call."
+            then: escalate
+        progress_stall:
+          max_turns: 4
+          on_exhaust:
+            say: "Please call."
+            then: escalate
+      sm:
+        _events_checked: true
+        filled:
+          party_size: 3
+          vip_code: "GOLD"
+        pending: {}
+        task_results: {}
+        _last_state:
+          filled:
+            party_size: 3
+            vip_code: "GOLD"
+          pending: {}
+          deferred: {}
+      last_user_text: ""
+  expectations:
+    response:
+    - path: "$.result.action.function_call"
+      operator: is_null
+
+# ═══════════════════════════════════════════════════════════════════
+# TASK RESULT SUBSTITUTION — then_say references task result fields
+# ═══════════════════════════════════════════════════════════════════
+
+- name: task_result_substitution_then_say
+  tool: slot_filling_engine
+  args:
+    input_data:
+      raw_config:
+        slots:
+        - name: symbol
+          source: user
+          setter: set_symbol
+          hint: "Stock symbol"
+          ask: "Which symbol?"
+          requires_readback: false
+        - name: quote_result
+          source: "task:GetQuote"
+        tasks:
+        - name: GetQuote
+          tool: get_quote
+          inputs: ["symbol"]
+          outputs:
+            quote_result: quote_result
+          success_check: success
+          terminal: true
+          then_say: "As of {quoteDate}, {symbolName} ({symbol}) is trading at {lastTradeValue}."
+        confirm_transition_prefix: ""
+        readback_retry:
+          max_retries: 2
+          on_exhaust:
+            say: "Please call."
+            then: escalate
+        progress_stall:
+          max_turns: 4
+          on_exhaust:
+            say: "Please call."
+            then: escalate
+      sm:
+        _events_checked: true
+        filled:
+          symbol: "AAPL"
+          quote_result: "done"
+        pending: {}
+        task_results:
+          GetQuote:
+            success: true
+            quoteDate: "May 15, 2026"
+            symbolName: "Apple Inc."
+            lastTradeValue: "$195.50"
+            quote_result: "done"
+        _task_just_completed: "GetQuote"
+        _last_state:
+          filled:
+            symbol: "AAPL"
+            quote_result: "done"
+          pending: {}
+          deferred: {}
+      last_user_text: ""
+  expectations:
+    response:
+    - path: "$.result.action.message"
+      operator: contains
+      value: "Apple Inc."
+    - path: "$.result.action.message"
+      operator: contains
+      value: "$195.50"
+    - path: "$.result.action.message"
+      operator: contains
+      value: "AAPL"
+
+- name: task_result_substitution_then_response
+  tool: slot_filling_engine
+  args:
+    input_data:
+      raw_config:
+        slots:
+        - name: symbol
+          source: user
+          setter: set_symbol
+          hint: "Stock symbol"
+          ask: "Which symbol?"
+          requires_readback: false
+        - name: quote_result
+          source: "task:GetQuote"
+        tasks:
+        - name: GetQuote
+          tool: get_quote
+          inputs: ["symbol"]
+          outputs:
+            quote_result: quote_result
+          success_check: success
+          terminal: true
+          then_say: "Quote for {symbol}."
+          then_response:
+          - type: payload
+            data:
+              text: "{symbolName} is trading at {lastTradeValue}."
+        confirm_transition_prefix: ""
+        readback_retry:
+          max_retries: 2
+          on_exhaust:
+            say: "Please call."
+            then: escalate
+        progress_stall:
+          max_turns: 4
+          on_exhaust:
+            say: "Please call."
+            then: escalate
+      sm:
+        _events_checked: true
+        filled:
+          symbol: "MSFT"
+          quote_result: "done"
+        pending: {}
+        task_results:
+          GetQuote:
+            success: true
+            symbolName: "Microsoft Corp."
+            lastTradeValue: "$420.00"
+            quote_result: "done"
+        _task_just_completed: "GetQuote"
+        _last_state:
+          filled:
+            symbol: "MSFT"
+            quote_result: "done"
+          pending: {}
+          deferred: {}
+      last_user_text: ""
+  expectations:
+    response:
+    - path: "$.result.action.response[0].data.text"
+      operator: contains
+      value: "Microsoft Corp."
+    - path: "$.result.action.response[0].data.text"
+      operator: contains
+      value: "$420.00"
+
+# ═══════════════════════════════════════════════════════════════════
+# ON_COMPLETE — terminal task clears slots and resets status
+# ═══════════════════════════════════════════════════════════════════
+
+- name: on_complete_clears_slots_and_resets
+  tool: slot_filling_engine
+  args:
+    input_data:
+      raw_config:
+        slots:
+        - name: action
+          source: user
+          setter: set_action
+          hint: "Action"
+          ask: "Quote or Rating?"
+          requires_readback: false
+        - name: symbol
+          source: user
+          setter: set_symbol
+          hint: "Stock symbol"
+          ask: "Which symbol?"
+          requires_readback: false
+        - name: result
+          source: "task:FulfillAction"
+        tasks:
+        - name: FulfillAction
+          tool: fulfill_action
+          inputs: ["action", "symbol"]
+          outputs:
+            result: result
+          success_check: success
+          terminal: true
+          then_say: "Done for {symbol}."
+          on_complete:
+            clear_slots: ["action", "symbol"]
+        confirm_transition_prefix: ""
+        readback_retry:
+          max_retries: 2
+          on_exhaust:
+            say: "Please call."
+            then: escalate
+        progress_stall:
+          max_turns: 4
+          on_exhaust:
+            say: "Please call."
+            then: escalate
+      sm:
+        _events_checked: true
+        filled:
+          action: "Quote"
+          symbol: "AAPL"
+          result: "done"
+        pending: {}
+        task_results:
+          FulfillAction:
+            success: true
+            result: "done"
+        _task_just_completed: "FulfillAction"
+        _last_state:
+          filled:
+            action: "Quote"
+            symbol: "AAPL"
+            result: "done"
+          pending: {}
+          deferred: {}
+      last_user_text: ""
+  expectations:
+    response:
+    - path: "$.result.sm.status"
+      operator: equals
+      value: "in_progress"
+    - path: "$.result.sm.filled.action"
+      operator: is_null
+    - path: "$.result.sm.filled.symbol"
+      operator: is_null
+    - path: "$.result.sm.task_results.FulfillAction"
+      operator: is_null
+    - path: "$.result.action.message"
+      operator: contains
+      value: "Done for AAPL"
+
+- name: on_complete_absent_sets_complete
+  tool: slot_filling_engine
+  args:
+    input_data:
+      raw_config: *config
+      sm:
+        _events_checked: true
+        filled:
+          welcome: true
+          party_size: 2
+          preferred_date: "2027-06-01"
+          available_times: "6:00 PM"
+          selected_time: "18:00"
+          guest_name: "Maria"
+          special_requests: "none"
+          confirmation_number: "BN-1234"
+        pending: {}
+        task_results:
+          FindAvailableTimes:
+            success: true
+            available_times: "6:00 PM"
+          BookReservation:
+            success: true
+            confirmation_number: "BN-1234"
+        _task_just_completed: "BookReservation"
+        _last_state:
+          filled:
+            welcome: true
+            party_size: 2
+            preferred_date: "2027-06-01"
+            available_times: "6:00 PM"
+            selected_time: "18:00"
+            guest_name: "Maria"
+            special_requests: "none"
+            confirmation_number: "BN-1234"
+          pending: {}
+          deferred: {}
+      last_user_text: ""
+  expectations:
+    response:
+    - path: "$.result.sm.status"
+      operator: equals
+      value: "complete"

@@ -33,6 +33,7 @@ _EVENT_PREFILL_PATTERN = re.compile(
 _READBACK_PROTOCOL_PATTERN = re.compile(
     r"<readback_protocol>.*?</readback_protocol>", re.DOTALL,
 )
+_EVENT_TAG_PATTERN = re.compile(r"<event>(.*?)</event>")
 
 
 def _make_collection_block(
@@ -121,6 +122,13 @@ def before_model_callback(  # pylint: disable=undefined-variable
 
   # ── Call the engine ─────────────────────────────────────────
   event_data = callback_context.state.get("event_data", {})
+  ia_event = callback_context.state.get("ia_event_name")
+  if not ia_event and last_user_text:
+    m = _EVENT_TAG_PATTERN.search(last_user_text)
+    if m:
+      ia_event = m.group(1)
+  if ia_event:
+    event_data["ia_event_name"] = ia_event
   engine_result = tools.slot_filling_engine(  # pylint: disable=undefined-variable
       {"input_data": {
           "raw_config": _RAW_CONFIG,
@@ -198,6 +206,10 @@ def before_model_callback(  # pylint: disable=undefined-variable
       and llm_request.contents
       and (len(llm_request.contents) > 1 or result.get("force_preempt"))):
     parts = []
+    if result.get("message"):
+      parts.append(Part.from_text(  # pylint: disable=undefined-variable
+          text=result["message"],
+      ))
     response_parts = result.get("response")
     if response_parts:
       for rp in response_parts:
@@ -225,10 +237,6 @@ def before_model_callback(  # pylint: disable=undefined-variable
           parts.append(Part.from_agent_transfer(  # pylint: disable=undefined-variable
               agent=rp["agent"],
           ))
-    elif result.get("message"):
-      parts.append(Part.from_text(  # pylint: disable=undefined-variable
-          text=result["message"],
-      ))
     fc = result.get("function_call")
     if fc:
       fn_call = Part.from_function_call(  # pylint: disable=undefined-variable

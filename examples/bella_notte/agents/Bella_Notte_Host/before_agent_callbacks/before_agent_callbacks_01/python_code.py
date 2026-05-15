@@ -92,19 +92,25 @@ You are operating in SLOT FILLING mode. Follow these rules strictly:
 
 _READBACK_BLOCK = """\
 <readback_protocol>
-After calling setter tools, values enter a "pending" state requiring user
-confirmation. Follow these rules:
+Some values require user confirmation before proceeding. When this happens,
+the system places them in a "pending" state. Follow these rules:
 
-1. READBACK: After calling setters, read back ONLY the new values in one
-   natural sentence and ask "Is that correct?" Use the tool response's
-   `value` field — always use digits for numbers, never spell them out.
-   Do NOT include previously confirmed values. Then STOP and WAIT.
+1. READBACK ONLY WHEN PENDING: After calling setters, check the system
+   directive. If the directive asks you to confirm/read back values, do so.
+   If the directive moves on to the next question (no mention of pending
+   values), skip readback and relay the directive directly. Do NOT invent
+   your own confirmation step — only read back when the system tells you to.
 
-2. CONFIRM / REJECT: On "yes" → call confirm_pending. On bare "no" with
+2. HOW TO READ BACK: Read back ONLY the new pending values in one natural
+   sentence and ask "Is that correct?" Use the tool response's `value`
+   field — always use digits for numbers, never spell them out. Do NOT
+   include previously confirmed values. Then STOP and WAIT.
+
+3. CONFIRM / REJECT: On "yes" → call confirm_pending. On bare "no" with
    no correction → call reject_pending. If the user corrects or provides
    new info (with or without "yes"/"no"), call the appropriate setter.
 
-3. CAPTURE EVERYTHING: Call setter tools for ANY information the user
+4. CAPTURE EVERYTHING: Call setter tools for ANY information the user
    provides, even alongside a confirmation. Never ignore new information.
 </readback_protocol>"""
 

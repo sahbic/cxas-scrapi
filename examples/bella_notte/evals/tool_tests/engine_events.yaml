@@ -171,17 +171,18 @@ tests:
       operator: equals
       value: true
 
-- name: event_prefill_skips_when_checked
+- name: event_prefill_idempotent_already_filled
   tool: slot_filling_engine
   args:
     input_data:
       raw_config: *config
       sm:
-        _events_checked: true
-        filled: {}
+        filled:
+          party_size: 4
         pending: {}
         _last_state:
-          filled: {}
+          filled:
+            party_size: 4
           pending: {}
           deferred: {}
       last_user_text: ""
@@ -190,7 +191,8 @@ tests:
   expectations:
     response:
     - path: "$.result.sm.filled.party_size"
-      operator: is_null
+      operator: equals
+      value: 4
     - path: "$.result.action.event_prefilled"
       operator: equals
       value: false
@@ -213,3 +215,200 @@ tests:
     - path: "$.result.action.message"
       operator: contains
       value: "Welcome"
+
+# ═══════════════════════════════════════════════════════════════════
+# EVENT PREFILL — multiple slots at once
+# ═══════════════════════════════════════════════════════════════════
+
+- name: event_prefill_multiple_slots
+  tool: slot_filling_engine
+  args:
+    input_data:
+      raw_config:
+        slots:
+        - name: name
+          source: ["event", "user"]
+          event_key: name
+          setter: set_name
+          hint: "Name"
+          ask: "What name?"
+          requires_readback: true
+        - name: email
+          source: ["event", "user"]
+          event_key: email
+          setter: set_email
+          hint: "Email"
+          ask: "What email?"
+          requires_readback: true
+        - name: phone
+          source: user
+          setter: set_phone
+          hint: "Phone"
+          ask: "What phone?"
+          requires_readback: true
+        tasks: []
+        confirm_transition_prefix: ""
+        readback_retry:
+          max_retries: 2
+          on_exhaust:
+            say: "Error."
+            then: escalate
+        progress_stall:
+          max_turns: 4
+          on_exhaust:
+            say: "Error."
+            then: escalate
+      sm:
+        filled: {}
+        pending: {}
+      last_user_text: ""
+      event_data:
+        name: "Alice"
+        email: "alice@example.com"
+  expectations:
+    response:
+    - path: "$.result.sm.filled.name"
+      operator: equals
+      value: "Alice"
+    - path: "$.result.sm.filled.email"
+      operator: equals
+      value: "alice@example.com"
+    - path: "$.result.sm.filled.phone"
+      operator: is_null
+    - path: "$.result.action.event_prefilled"
+      operator: equals
+      value: true
+
+- name: event_prefill_skips_inactive_conditional
+  tool: slot_filling_engine
+  args:
+    input_data:
+      raw_config:
+        slots:
+        - name: party_size
+          source: ["event", "user"]
+          event_key: party_size
+          setter: set_party_size
+          hint: "Party size"
+          ask: "How many?"
+          requires_readback: true
+        - name: large_party_phone
+          source: ["event", "user"]
+          event_key: phone
+          setter: set_phone
+          hint: "Phone (large parties)"
+          condition: "lambda filled: int(filled.get('party_size', 0)) >= 5"
+          ask: "Phone number?"
+          requires_readback: true
+        tasks: []
+        confirm_transition_prefix: ""
+        readback_retry:
+          max_retries: 2
+          on_exhaust:
+            say: "Error."
+            then: escalate
+        progress_stall:
+          max_turns: 4
+          on_exhaust:
+            say: "Error."
+            then: escalate
+      sm:
+        filled: {}
+        pending: {}
+      last_user_text: ""
+      event_data:
+        party_size: 2
+        phone: "555-1234"
+  expectations:
+    response:
+    - path: "$.result.sm.filled.party_size"
+      operator: equals
+      value: 2
+    - path: "$.result.sm.filled.large_party_phone"
+      operator: is_null
+
+# ═══════════════════════════════════════════════════════════════════
+# EVENT MAPPINGS — CES event name maps to slot values via config
+# ═══════════════════════════════════════════════════════════════════
+
+- name: event_mapping_maps_event_to_slot
+  tool: slot_filling_engine
+  args:
+    input_data:
+      raw_config:
+        slots:
+        - name: alert_price_type
+          source: ["event", "user"]
+          setter: set_alert_price_type
+          hint: "Price type"
+          ask: "Bid, ask, or last?"
+          requires_readback: true
+        tasks: []
+        confirm_transition_prefix: ""
+        readback_retry:
+          max_retries: 2
+          on_exhaust:
+            say: "Error."
+            then: escalate
+        progress_stall:
+          max_turns: 4
+          on_exhaust:
+            say: "Error."
+            then: escalate
+        event_mappings:
+          alert_last_price:
+            alert_price_type: "last"
+          alert_bid_price:
+            alert_price_type: "bid"
+      sm:
+        filled: {}
+        pending: {}
+      last_user_text: ""
+      event_data:
+        ia_event_name: "alert_last_price"
+  expectations:
+    response:
+    - path: "$.result.sm.filled.alert_price_type"
+      operator: equals
+      value: "last"
+
+- name: event_mapping_no_match_ignored
+  tool: slot_filling_engine
+  args:
+    input_data:
+      raw_config:
+        slots:
+        - name: alert_price_type
+          source: ["event", "user"]
+          setter: set_alert_price_type
+          hint: "Price type"
+          ask: "Bid, ask, or last?"
+          requires_readback: true
+        tasks: []
+        confirm_transition_prefix: ""
+        readback_retry:
+          max_retries: 2
+          on_exhaust:
+            say: "Error."
+            then: escalate
+        progress_stall:
+          max_turns: 4
+          on_exhaust:
+            say: "Error."
+            then: escalate
+        event_mappings:
+          alert_last_price:
+            alert_price_type: "last"
+      sm:
+        filled: {}
+        pending: {}
+      last_user_text: ""
+      event_data:
+        ia_event_name: "some_other_event"
+  expectations:
+    response:
+    - path: "$.result.sm.filled.alert_price_type"
+      operator: is_null
+    - path: "$.result.action.message"
+      operator: contains
+      value: "Bid, ask, or last?"

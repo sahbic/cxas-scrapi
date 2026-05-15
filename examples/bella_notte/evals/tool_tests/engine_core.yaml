@@ -456,3 +456,107 @@ tests:
     - path: "$.result.action.message"
       operator: contains
       value: "How many guests"
+
+# ═══════════════════════════════════════════════════════════════════
+# ADDITIONAL FORMATTERS
+# ═══════════════════════════════════════════════════════════════════
+
+- name: formatter_prefix
+  tool: slot_filling_engine
+  args:
+    input_data:
+      raw_config: *config
+      sm:
+        _events_checked: true
+        filled:
+          welcome: true
+          party_size: 5
+          preferred_date: "2027-06-01"
+          available_times: "7:00 PM"
+          selected_time: "19:00"
+          guest_name: "Maria"
+          special_requests: "none"
+        pending:
+          large_party_phone: "555-0100"
+        task_results:
+          FindAvailableTimes:
+            success: true
+            available_times: "7:00 PM"
+        _last_state:
+          filled:
+            welcome: true
+            party_size: 5
+            preferred_date: "2027-06-01"
+            available_times: "7:00 PM"
+            selected_time: "19:00"
+            guest_name: "Maria"
+            special_requests: "none"
+          pending: {}
+          deferred: {}
+      last_user_text: ""
+  expectations:
+    response:
+    - path: "$.result.action.si_suffix"
+      operator: contains
+      value: "contact phone 555-0100"
+
+- name: formatter_none_sub_passthrough
+  tool: slot_filling_engine
+  args:
+    input_data:
+      raw_config: *config
+      sm:
+        _events_checked: true
+        filled:
+          welcome: true
+          party_size: 2
+          preferred_date: "2027-06-01"
+          available_times: "6:00 PM"
+          selected_time: "18:00"
+          guest_name: "Maria"
+        pending:
+          special_requests: "Window seat please"
+        task_results:
+          FindAvailableTimes:
+            success: true
+            available_times: "6:00 PM"
+        _last_state:
+          filled:
+            welcome: true
+            party_size: 2
+            preferred_date: "2027-06-01"
+            available_times: "6:00 PM"
+            selected_time: "18:00"
+            guest_name: "Maria"
+          pending: {}
+          deferred: {}
+      last_user_text: ""
+  expectations:
+    response:
+    - path: "$.result.action.si_suffix"
+      operator: contains
+      value: "Window seat please"
+
+# ═══════════════════════════════════════════════════════════════════
+# FILL_SLOTS — event pre-fill writes directly to filled
+# ═══════════════════════════════════════════════════════════════════
+
+- name: fill_slots_via_event_to_filled
+  tool: slot_filling_engine
+  args:
+    input_data:
+      raw_config: *config
+      sm:
+        filled:
+          welcome: true
+        pending: {}
+      last_user_text: ""
+      event_data:
+        party_size: 4
+  expectations:
+    response:
+    - path: "$.result.sm.filled.party_size"
+      operator: equals
+      value: 4
+    - path: "$.result.sm.pending.party_size"
+      operator: is_null

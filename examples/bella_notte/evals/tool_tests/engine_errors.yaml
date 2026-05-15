@@ -540,3 +540,67 @@ tests:
     response:
     - path: "$.result.action.hide_tools"
       operator: is_not_null
+
+# ═══════════════════════════════════════════════════════════════════
+# ERROR RETRY COUNTER — resets after successful fill
+# ═══════════════════════════════════════════════════════════════════
+
+- name: error_retry_counter_resets_on_fill
+  tool: slot_filling_engine
+  args:
+    input_data:
+      raw_config: *config
+      sm:
+        _events_checked: true
+        filled:
+          welcome: true
+          party_size: 4
+        pending: {}
+        _retries:
+          "slot:party_size": 2
+        _last_state:
+          filled:
+            welcome: true
+          pending: {}
+          deferred: {}
+      last_user_text: ""
+  expectations:
+    response:
+    - path: "$.result.sm._retries['slot:party_size']"
+      operator: is_null
+
+# ═══════════════════════════════════════════════════════════════════
+# READBACK STALL — non-exhaust clears pending and asks next
+# ═══════════════════════════════════════════════════════════════════
+
+- name: readback_stall_nonexhaust_asks_next
+  tool: slot_filling_engine
+  args:
+    input_data:
+      raw_config: *config
+      sm:
+        _events_checked: true
+        filled:
+          welcome: true
+        pending:
+          party_size: 4
+        _readback_stall: 2
+        _retries: {}
+        _last_state:
+          filled:
+            welcome: true
+          pending:
+            party_size: 4
+          deferred: {}
+      last_user_text: "I'm not sure"
+  expectations:
+    response:
+    - path: "$.result.action.preempt"
+      operator: equals
+      value: true
+    - path: "$.result.action.force_preempt"
+      operator: equals
+      value: true
+    - path: "$.result.sm.pending"
+      operator: equals
+      value: {}
