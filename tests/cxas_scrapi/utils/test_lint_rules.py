@@ -1078,7 +1078,103 @@ def test_t011_no_none_default(tmp_path, context):
     assert len(results) == 0
 
 
+def test_t008_json_tool_unreferenced(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.tools import ToolDisplayNameUnreferenced  # noqa: PLC0415,I001
+
+    rule = ToolDisplayNameUnreferenced()
+    # Create an orphaned json widget tool config directly (no python_function subdir)
+    (tmp_path / "tools" / "custom_slider").mkdir(parents=True)
+    f = tmp_path / "tools" / "custom_slider" / "custom_slider.json"
+    f.write_text('{"name": "custom_slider", "displayName": "custom_slider"}')
+
+    # Create agent that doesn't reference it
+    (tmp_path / "agents" / "root_agent").mkdir(parents=True)
+    (tmp_path / "agents" / "root_agent" / "root_agent.json").write_text(
+        '{"displayName": "root_agent", "tools": ["other_tool"]}'
+    )
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 1
+    assert "custom_slider" in results[0].message
+
+
+def test_t004_json_tool_skipped(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.tools import FunctionNameMismatch  # noqa: PLC0415,I001
+
+    rule = FunctionNameMismatch()
+    # A widget tool json should be skipped without complaining about missing Python functions
+    f = tmp_path / "tools" / "custom_slider" / "custom_slider.json"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text('{"displayName": "custom_slider", "widgetTool": {}}')
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 0
+
+
+def test_t012_python_function_description(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.tools import MissingToolDescriptionInJSON  # noqa: PLC0415,I001
+
+    rule = MissingToolDescriptionInJSON()
+
+    # Case 1: has pythonFunction description
+    f = tmp_path / "tools" / "my_func" / "my_func.json"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text('{"displayName": "my_func", "pythonFunction": {"description": "A great tool"}}')
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 0
+
+    # Case 2: missing pythonFunction description
+    f.write_text('{"displayName": "my_func", "pythonFunction": {}}')
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 1
+    assert "pythonFunction.description" in results[0].message
+
+
+def test_t012_widget_tool_description(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.tools import MissingToolDescriptionInJSON  # noqa: PLC0415,I001
+
+    rule = MissingToolDescriptionInJSON()
+
+    # Case 1: has widgetTool description
+    f = tmp_path / "tools" / "my_widget" / "my_widget.json"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text('{"displayName": "my_widget", "widgetTool": {"description": "A cool slider widget"}}')
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 0
+
+    # Case 2: missing widgetTool description
+    f.write_text('{"displayName": "my_widget", "widgetTool": {}}')
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 1
+    assert "widgetTool.description" in results[0].message
+
+
+def test_t001_json_tool_skipped(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.tools import MissingAgentAction  # noqa: PLC0415,I001
+
+    rule = MissingAgentAction()
+    f = tmp_path / "tools" / "custom_slider" / "custom_slider.json"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text('{"displayName": "custom_slider", "widgetTool": {}}')
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 0
+
+
+def test_t010_json_tool_skipped(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.tools import ToolInvalidPythonSyntax  # noqa: PLC0415,I001
+
+    rule = ToolInvalidPythonSyntax()
+    f = tmp_path / "tools" / "custom_slider" / "custom_slider.json"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text('{"displayName": "custom_slider", "widgetTool": {}}')
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 0
+
+
 # ── Eval Rules ───────────────────────────────────────────────────────────
+
 
 
 def test_e001_invalid_yaml(tmp_path, context):
