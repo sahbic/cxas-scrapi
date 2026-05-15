@@ -171,6 +171,9 @@ nav:
       - Pull & Push Workflow: guides/agent-development/pull-push-workflow.md
       - Branching Apps: guides/agent-development/branching.md
       - Team Collaboration: guides/agent-development/team-collaboration.md
+    - Agent Migration & Optimization:
+      - guides/migration/index.md
+      - DFCX to CXAS Migration: guides/migration/dfcx-migration.md
     - Testing & Evaluation:
       - guides/evaluation/index.md
       - Platform Goldens: guides/evaluation/platform-goldens.md

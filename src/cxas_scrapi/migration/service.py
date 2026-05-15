@@ -553,12 +553,12 @@ class MigrationService:
             await asyncio.gather(*tasks)
 
         # --- 10. Finalization & Topology Linking (Phase 4) ---
-        logger.info("FINAL DEPLOYMENT & TOPOLOGY LINKING")
+        logger.info("DEPLOYMENT & TOPOLOGY LINKING")
         self.topology_linker.link_and_finalize_topology(
             self.ir, self.source_agent_data
         )
 
-        logger.info("MIGRATION COMPLETE!")
+        logger.info("MIGRATION STAGE COMPLETE, STARTING OPTIMIZATION")
         app_url = f"https://ces.cloud.google.com/projects/{self.project_id}/locations/{self.location}/apps/{self.ir.metadata.app_id}"
         logger.info(f"ACCESS YOUR CXAS AGENT HERE:\n{app_url}")
 

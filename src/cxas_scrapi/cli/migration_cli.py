@@ -101,25 +101,23 @@ class MigrationCLI:
             default=DEFAULT_MODEL,
         )
 
-        migration_version = Prompt.ask(
-            "Enter Logic Version", choices=["1.0", "2.0"], default="2.0"
-        )
+        optimize_for_cxas = Confirm.ask("Optimize for CXAS?", default=True)
 
         gen_report = Confirm.ask("Generate Migration Report?", default=True)
         gen_unit_tests = Confirm.ask(
-            "Generate Unit Tests (Auto-Fix)?", default=True
+            "Generate Unit Tests (Auto-Fix)? [yellow]*feature coming*[/]",
+            default=True,
         )
         gen_hillclimbing_evals = Confirm.ask(
-            "Generate Hillclimbing Evals?", default=False
+            "Generate Hillclimbing Evals? [yellow]*feature coming*[/]",
+            default=False,
         )
 
         eval_runner_target = Prompt.ask(
-            "Enter Eval Target",
+            "Enter Eval Target [yellow]*feature coming*[/]",
             choices=["Custom API Runner", "Native Product Eval (Stub)"],
             default="Custom API Runner",
         )
-
-        optimize_for_cxas = Confirm.ask("Optimize for CXAS?", default=False)
 
         return MigrationConfig(
             project_id=project_id,
@@ -130,7 +128,7 @@ class MigrationCLI:
             gen_unit_tests=gen_unit_tests,
             gen_hillclimbing_evals=gen_hillclimbing_evals,
             eval_runner_target=eval_runner_target,
-            migration_version=migration_version,
+            migration_version="2.0",
             optimize_for_cxas=optimize_for_cxas,
         )
 
