@@ -1082,7 +1082,8 @@ def test_t008_json_tool_unreferenced(tmp_path, context):
     from cxas_scrapi.utils.lint_rules.tools import ToolDisplayNameUnreferenced  # noqa: PLC0415,I001
 
     rule = ToolDisplayNameUnreferenced()
-    # Create an orphaned json widget tool config directly (no python_function subdir)
+    # Create an orphaned json widget tool config directly
+    # (no python_function subdir)
     (tmp_path / "tools" / "custom_slider").mkdir(parents=True)
     f = tmp_path / "tools" / "custom_slider" / "custom_slider.json"
     f.write_text('{"name": "custom_slider", "displayName": "custom_slider"}')
@@ -1102,7 +1103,8 @@ def test_t004_json_tool_skipped(tmp_path, context):
     from cxas_scrapi.utils.lint_rules.tools import FunctionNameMismatch  # noqa: PLC0415,I001
 
     rule = FunctionNameMismatch()
-    # A widget tool json should be skipped without complaining about missing Python functions
+    # A widget tool json should be skipped without complaining
+    # about missing Python functions
     f = tmp_path / "tools" / "custom_slider" / "custom_slider.json"
     f.parent.mkdir(parents=True, exist_ok=True)
     f.write_text('{"displayName": "custom_slider", "widgetTool": {}}')
@@ -1119,7 +1121,10 @@ def test_t012_python_function_description(tmp_path, context):
     # Case 1: has pythonFunction description
     f = tmp_path / "tools" / "my_func" / "my_func.json"
     f.parent.mkdir(parents=True, exist_ok=True)
-    f.write_text('{"displayName": "my_func", "pythonFunction": {"description": "A great tool"}}')
+    f.write_text(
+        '{"displayName": "my_func", "pythonFunction": '
+        '{"description": "A great tool"}}'
+    )
     results = rule.check(f, f.read_text(), context)
     assert len(results) == 0
 
@@ -1138,7 +1143,10 @@ def test_t012_widget_tool_description(tmp_path, context):
     # Case 1: has widgetTool description
     f = tmp_path / "tools" / "my_widget" / "my_widget.json"
     f.parent.mkdir(parents=True, exist_ok=True)
-    f.write_text('{"displayName": "my_widget", "widgetTool": {"description": "A cool slider widget"}}')
+    f.write_text(
+        '{"displayName": "my_widget", "widgetTool": '
+        '{"description": "A cool slider widget"}}'
+    )
     results = rule.check(f, f.read_text(), context)
     assert len(results) == 0
 

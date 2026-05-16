@@ -511,7 +511,8 @@ class MissingToolDescriptionInJSON(Rule):
     id = "T012"
     name = "tool-json-missing-description"
     description = (
-        "Tool JSON configuration must include pythonFunction.description or widgetTool.description."
+        "Tool JSON configuration must include pythonFunction.description "
+        "or widgetTool.description."
     )
     default_severity = Severity.ERROR
 
