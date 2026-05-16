@@ -42,8 +42,6 @@ import _prompts  # noqa: E402
 import _reporter  # noqa: E402
 import _shared  # noqa: E402
 
-from cxas_scrapi.core.agents import Agents
-from cxas_scrapi.core.tools import Tools
 from cxas_scrapi.core.versions import Versions
 from cxas_scrapi.migration.eval_generator import DeterministicEvalGenerator
 from cxas_scrapi.migration.service import MigrationService
@@ -99,41 +97,17 @@ def _resolve_bundle_path(args) -> str:
 
 
 def _restore_service(bundle: _bundle.IRBundle, args) -> MigrationService:
-    """Recreate a MigrationService from a persisted IR bundle. See stage1.py
-    `_restore_service` for the attributes initialized here and why."""
-    project_id = args.project_id or bundle.config.project_id
-    location = args.location or _resolve_location_from_bundle(bundle)
-    service = MigrationService(
-        project_id=project_id,
-        location=location,
-        default_model=bundle.config.model,
+    """Delegate to `MigrationService.restore_from_bundle`, honoring the
+    skill's `--project-id` / `--location` CLI overrides."""
+    return MigrationService.restore_from_bundle(
+        bundle,
+        project_id=getattr(args, "project_id", None),
+        location=getattr(args, "location", None),
     )
-    service.ir = bundle.ir
-    service.source_agent_data = bundle.source_agent_data
-    service.deployment_state = {
-        "app_created": True,
-        "vars_deployed": True,
-        "app_timeout_configured": True,
-        "app_model_configured": True,
-    }
-    service.eval_generator = DeterministicEvalGenerator(service.ir)
-
-    app_resource = service.ir.metadata.app_resource_name
-    if app_resource:
-        service.ps_agents = Agents(app_name=app_resource)
-        service.ps_tools = Tools(app_name=app_resource)
-        if hasattr(service, "topology_linker"):
-            service.topology_linker.ps_agents = service.ps_agents
-        if hasattr(service, "code_block_migrator"):
-            service.code_block_migrator.ps_tools = service.ps_tools
-
-    return service
 
 
 def _resolve_location_from_bundle(bundle: _bundle.IRBundle) -> str:
-    if bundle.app_url and "/locations/" in bundle.app_url:
-        return bundle.app_url.split("/locations/")[1].split("/")[0]
-    return _prompts.DEFAULT_LOCATION
+    return bundle.resolve_location(default=_prompts.DEFAULT_LOCATION)
 
 
 async def _run(args) -> None:

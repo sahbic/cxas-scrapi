@@ -55,7 +55,6 @@ import _bundle  # noqa: E402
 import _phase_tracker  # noqa: E402
 import _prompts  # noqa: E402
 import _shared  # noqa: E402
-import stage1 as _stage1  # noqa: E402  (reuses _restore_service)
 
 from cxas_scrapi.core.agents import Agents
 from cxas_scrapi.core.apps import Apps
@@ -398,7 +397,7 @@ def maybe_set_root(
     try:
         apps_client = Apps(
             project_id=bundle.config.project_id,
-            location=_stage1._resolve_location_from_bundle(bundle),
+            location=bundle.resolve_location(),
         )
         apps_client.update_app(
             bundle.ir.metadata.app_resource_name,
