@@ -24,6 +24,8 @@ import json
 import re
 from pathlib import Path
 
+import yaml
+
 from cxas_scrapi.utils.linter import (
     LintContext,
     LintResult,
@@ -208,4 +210,146 @@ class ChildAgentReferences(Rule):
                         fix="Create the agent directory or fix the reference",
                     )
                 )
+        return results
+
+
+_CALLBACK_TYPES = [
+    "beforeModelCallbacks",
+    "afterModelCallbacks",
+    "beforeTurnCallbacks",
+    "afterTurnCallbacks",
+]
+
+
+@rule("structure")
+class StrictAgentPathLayout(Rule):
+    id = "S005"
+    name = "strict-agent-path-layout"
+    description = (
+        "Agent config relative paths must be app-relative and "
+        "prefixed with agents/{agent_name}/"
+    )
+    default_severity = Severity.ERROR
+    target = "agent_config"
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        agent_name = file_path.stem
+        try:
+            agent_config = json.loads(content)
+        except json.JSONDecodeError:
+            return []
+
+        results = []
+
+        # 1. Check instruction path
+        instruction_path = agent_config.get("instruction")
+        if instruction_path:
+            expected_prefix = f"agents/{agent_name}/"
+            if not instruction_path.startswith(expected_prefix):
+                results.append(
+                    self.make_result(
+                        str(file_path),
+                        (
+                            f"Agent instruction path '{instruction_path}' "
+                            "must be relative to the app root and start "
+                            f"with '{expected_prefix}'"
+                        ),
+                        fix=(
+                            f"Change '{instruction_path}' to "
+                            f"'{expected_prefix}instruction.txt'"
+                        ),
+                    )
+                )
+
+        # 2. Check callbacks paths
+        for cb_type in _CALLBACK_TYPES:
+            callbacks = agent_config.get(cb_type, [])
+            for i, cb in enumerate(callbacks):
+                code_path = cb.get("pythonCode")
+                if code_path:
+                    expected_prefix = f"agents/{agent_name}/"
+                    if not code_path.startswith(expected_prefix):
+                        results.append(
+                            self.make_result(
+                                str(file_path),
+                                (
+                                    "Agent callback pythonCode path "
+                                    f"'{code_path}' in {cb_type}[{i}] "
+                                    "must be relative to the app root and "
+                                    f"start with '{expected_prefix}'"
+                                ),
+                                fix=(
+                                    f"Change '{code_path}' to start "
+                                    f"with '{expected_prefix}'"
+                                ),
+                            )
+                        )
+
+        return results
+
+
+@rule("structure")
+class StrictToolPathLayout(Rule):
+    id = "S006"
+    name = "strict-tool-path-layout"
+    description = (
+        "Tool config relative paths must be app-relative and "
+        "prefixed with tools/{tool_name}/"
+    )
+    default_severity = Severity.ERROR
+    target = "tool_config"
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        tool_name = file_path.name
+
+        yaml_path = file_path / f"{tool_name}.yaml"
+        json_path = file_path / f"{tool_name}.json"
+
+        config_data = None
+        target_path = None
+
+        if yaml_path.exists():
+            try:
+                config_data = yaml.safe_load(yaml_path.read_text())
+                target_path = yaml_path
+            except Exception:
+                return []
+        elif json_path.exists():
+            try:
+                config_data = json.loads(json_path.read_text())
+                target_path = json_path
+            except Exception:
+                return []
+        else:
+            return []
+
+        if not config_data:
+            return []
+
+        results = []
+        python_function = config_data.get("pythonFunction", {})
+        if isinstance(python_function, dict):
+            code_path = python_function.get("pythonCode")
+            if code_path:
+                expected_prefix = f"tools/{tool_name}/"
+                if not code_path.startswith(expected_prefix):
+                    results.append(
+                        self.make_result(
+                            str(target_path),
+                            (
+                                f"Tool pythonCode path '{code_path}' must be "
+                                "relative to the app root and start with "
+                                f"'{expected_prefix}'"
+                            ),
+                            fix=(
+                                f"Change '{code_path}' to start with "
+                                f"'{expected_prefix}'"
+                            ),
+                        )
+                    )
+
         return results

@@ -1673,3 +1673,143 @@ def test_s004_child_agent_by_display_name(tmp_path, context):
 
     results = rule.check(f, f.read_text(), context)
     assert len(results) == 0
+
+
+# --- Rules A006, S005, S006 Tests ---
+
+
+def test_a006_root_agent_snake_case(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.config import AppRootAgentValidation  # noqa: PLC0415,I001
+
+    rule = AppRootAgentValidation()
+    f = tmp_path / "app.json"
+    f.write_text('{"root_agent": "my_root"}')
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 1
+    assert "Found 'root_agent' in app.json" in results[0].message
+
+
+def test_a006_root_agent_missing(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.config import AppRootAgentValidation  # noqa: PLC0415,I001
+
+    rule = AppRootAgentValidation()
+    f = tmp_path / "app.json"
+    f.write_text('{"displayName": "Hello App"}')
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 1
+    assert "Missing required field 'rootAgent'" in results[0].message
+
+
+def test_a006_root_agent_not_string(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.config import AppRootAgentValidation  # noqa: PLC0415,I001
+
+    rule = AppRootAgentValidation()
+    f = tmp_path / "app.json"
+    f.write_text('{"rootAgent": 123}')
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 1
+    assert "must be a string" in results[0].message
+
+
+def test_a006_root_agent_directory_missing(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.config import AppRootAgentValidation  # noqa: PLC0415,I001
+
+    rule = AppRootAgentValidation()
+    f = tmp_path / "app.json"
+    f.write_text('{"rootAgent": "non_existent"}')
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 1
+    assert "does not exist under the agents/ directory" in results[0].message
+
+
+def test_a006_root_agent_valid(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.config import AppRootAgentValidation  # noqa: PLC0415,I001
+
+    rule = AppRootAgentValidation()
+    f = tmp_path / "app.json"
+    f.write_text('{"rootAgent": "billing_agent"}')
+
+    (tmp_path / "agents" / "billing_agent").mkdir(parents=True, exist_ok=True)
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 0
+
+
+def test_s005_agent_paths_valid(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.structure import StrictAgentPathLayout  # noqa: PLC0415,I001
+
+    rule = StrictAgentPathLayout()
+    f = tmp_path / "root_agent.json"
+    f.write_text(
+        '{"instruction": "agents/root_agent/instruction.txt", '
+        '"beforeModelCallbacks": [{'
+        '"pythonCode": "agents/root_agent/callbacks/my_cb.py"'
+        "}]}"
+    )
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 0
+
+
+def test_s005_agent_paths_invalid_instruction(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.structure import StrictAgentPathLayout  # noqa: PLC0415,I001
+
+    rule = StrictAgentPathLayout()
+    f = tmp_path / "root_agent.json"
+    f.write_text('{"instruction": "instruction.txt"}')
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 1
+    assert "Agent instruction path" in results[0].message
+    assert "agents/root_agent/" in results[0].message
+
+
+def test_s005_agent_paths_invalid_callback(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.structure import StrictAgentPathLayout  # noqa: PLC0415,I001
+
+    rule = StrictAgentPathLayout()
+    f = tmp_path / "root_agent.json"
+    f.write_text(
+        '{"beforeModelCallbacks": [{"pythonCode": "callbacks/my_cb.py"}]}'
+    )
+
+    results = rule.check(f, f.read_text(), context)
+    assert len(results) == 1
+    assert "Agent callback pythonCode path" in results[0].message
+    assert "agents/root_agent/" in results[0].message
+
+
+def test_s006_tool_paths_valid(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.structure import StrictToolPathLayout  # noqa: PLC0415,I001
+
+    rule = StrictToolPathLayout()
+    tool_dir = tmp_path / "tools" / "get_balance"
+    tool_dir.mkdir(parents=True, exist_ok=True)
+    tool_json = tool_dir / "get_balance.json"
+    tool_json.write_text(
+        '{"pythonFunction": {'
+        '"pythonCode": "tools/get_balance/python_function/python_code.py"'
+        "}}"
+    )
+
+    results = rule.check(tool_dir, "", context)
+    assert len(results) == 0
+
+
+def test_s006_tool_paths_invalid(tmp_path, context):
+    from cxas_scrapi.utils.lint_rules.structure import StrictToolPathLayout  # noqa: PLC0415,I001
+
+    rule = StrictToolPathLayout()
+    tool_dir = tmp_path / "tools" / "get_balance"
+    tool_dir.mkdir(parents=True, exist_ok=True)
+    tool_json = tool_dir / "get_balance.json"
+    tool_json.write_text(
+        '{"pythonFunction": {"pythonCode": "python_function/python_code.py"}}'
+    )
+
+    results = rule.check(tool_dir, "", context)
+    assert len(results) == 1
+    assert "Tool pythonCode path" in results[0].message
