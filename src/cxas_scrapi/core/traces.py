@@ -775,7 +775,9 @@ class Traces(Common):
                 self.app_config.model_version() if self.app_config else None
             ),
             "reporter": _gcloud_account() or os.environ.get("USER"),
-            "reported_at": datetime.datetime.utcnow().isoformat() + "Z",
+            "reported_at": (
+                datetime.datetime.now(datetime.timezone.utc).isoformat() + "Z"
+            ),
             "app_name": self.app_name,
         }
         uploaded["bug_report.json"] = gcs.upload_string(
@@ -808,7 +810,9 @@ class Traces(Common):
             ),
             "git_sha": _git_sha(),
             "gcloud_account": _gcloud_account(),
-            "captured_at": datetime.datetime.utcnow().isoformat() + "Z",
+            "captured_at": (
+                datetime.datetime.now(datetime.timezone.utc).isoformat() + "Z"
+            ),
         }
 
 
