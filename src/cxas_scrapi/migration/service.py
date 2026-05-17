@@ -14,10 +14,12 @@
 
 import asyncio
 import io
+import json
 import logging
 import re
 import uuid
-from typing import Any, Dict
+from datetime import datetime
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict
 
 import google.protobuf.duration_pb2
 from google.cloud.ces_v1beta import types
@@ -27,6 +29,12 @@ from cxas_scrapi.core.agents import Agents
 from cxas_scrapi.core.apps import Apps
 from cxas_scrapi.core.tools import Tools
 from cxas_scrapi.core.versions import Versions
+from cxas_scrapi.migration import (
+    integrity_checks,
+    ir_bundle,
+    structural_consolidator,
+    topology_wirer,
+)
 from cxas_scrapi.migration.ai_augment import AIAugment
 from cxas_scrapi.migration.artifacts_builder import CXASAsyncArtifactBuilder
 from cxas_scrapi.migration.code_block_migrator import CodeBlockMigrator
@@ -40,6 +48,7 @@ from cxas_scrapi.migration.data_models import (
     MigrationStatus,
 )
 from cxas_scrapi.migration.designer import AsyncAgentDesigner
+from cxas_scrapi.migration.dfcx_dep_analyzer import DependencyAnalyzer
 from cxas_scrapi.migration.dfcx_exporter import ConversationalAgentsAPI
 from cxas_scrapi.migration.dfcx_migration_reporter import DFCXMigrationReporter
 from cxas_scrapi.migration.dfcx_parameter_extractor import (
@@ -52,9 +61,13 @@ from cxas_scrapi.migration.flow_visualizer import (
     FlowDependencyResolver,
     FlowTreeVisualizer,
 )
-from cxas_scrapi.migration.optimizer import CXASOptimizer
+from cxas_scrapi.migration.optimization_reporter import OptimizationReporter
+from cxas_scrapi.migration.structural_consolidator import StructuralConsolidator
 from cxas_scrapi.utils.gemini import GeminiGenerate
 from cxas_scrapi.utils.secret_manager_utils import SecretManagerUtils
+
+if TYPE_CHECKING:
+    from cxas_scrapi.migration.ir_bundle import IRBundle
 
 logger = logging.getLogger(__name__)
 
@@ -192,6 +205,467 @@ class MigrationService:
                 service.code_block_migrator.ps_tools = service.ps_tools
 
         return service
+
+    # ------------------------------------------------------------------
+    # Stage-level public methods
+    #
+    # These are the single source of truth for each post-migration stage.
+    # `run_migration`'s `optimize_for_cxas` branch delegates to
+    # `run_stage1` + `run_stage2`. Stage subcommands and skill scripts
+    # call the same methods to avoid pipeline duplication.
+    # ------------------------------------------------------------------
+
+    async def run_stage1(
+        self,
+        *,
+        consolidate: bool = False,
+        bundle: "IRBundle | None" = None,
+        gemini_client: GeminiGenerate | None = None,
+        grouping_callback: (
+            Callable[[MigrationIR, dict], Awaitable[dict | None]] | None
+        ) = None,
+        grouping_json_path: str | None = None,
+        on_integrity_fail: str = "abort",
+        version_label: str | None = "0.0.1",
+        persist_bundle_path: str | None = None,
+        console: Console | None = None,
+    ) -> dict | None:
+        """Run Stage 1: variable dedup + optional Gemini consolidation.
+
+        Args:
+            consolidate: Opt-in flag for Gemini-driven N→M structural
+                consolidation. Default ``False`` preserves the historical
+                ``run_migration`` behavior (variable dedup only).
+            bundle: Required when ``consolidate=True`` — used to snapshot
+                ``pre_consolidation_ir`` and persist the accepted grouping.
+            gemini_client: Override the service's default Gemini client.
+            grouping_callback: Async callable invoked after the consolidator
+                proposes groupings, before integrity check + consolidate +
+                deploy. Receives ``(ir, groupings)`` and returns the
+                accepted ``groupings`` dict (possibly edited) or ``None`` to
+                abort the consolidation step. The Stage 1 variable dedup
+                still applies regardless.
+            grouping_json_path: If set, load groupings from this JSON file
+                instead of calling Gemini.
+            on_integrity_fail: How to handle ``check_consolidation_integrity``
+                blocking errors. ``"abort"`` raises ``RuntimeError`` (default,
+                safe). ``"warn"`` logs and continues. ``"ignore"`` is silent.
+            version_label: CXAS Version ``display_name`` to create after
+                the stage. ``None`` skips the checkpoint.
+            persist_bundle_path: If set, save the updated bundle to this
+                path after the stage.
+            console: Rich console for progress output. Defaults to a fresh
+                ``Console()`` (writes to stderr).
+
+        Returns:
+            The accepted grouping dict when ``consolidate=True`` and the
+            user accepted; otherwise ``None``.
+        """
+        if consolidate and bundle is None:
+            raise ValueError("run_stage1(consolidate=True) requires bundle=...")
+
+        from cxas_scrapi.migration import stage_runner  # noqa: PLC0415
+
+        console = console or Console()
+        gemini = gemini_client or self.gemini_client
+
+        # --- Variable dedup (always runs) -----------------------------------
+        optimizer = await stage_runner.run_stage_with_redeploy(
+            self, stage=1, console=console
+        )
+        stage_runner.merge_optimizer_logs_into_ir(self.ir, optimizer, "stage1")
+
+        # --- Optional Gemini consolidation ----------------------------------
+        accepted_groupings: dict | None = None
+        if consolidate:
+            accepted_groupings = await self._run_stage1_consolidation(
+                bundle=bundle,
+                gemini=gemini,
+                grouping_callback=grouping_callback,
+                grouping_json_path=grouping_json_path,
+                on_integrity_fail=on_integrity_fail,
+                console=console,
+            )
+
+        # --- CXAS Version checkpoint ----------------------------------------
+        if version_label and self.ir.metadata.app_resource_name:
+            description = "Stage 1: variable dedup" + (
+                " + consolidation" if consolidate and accepted_groupings else ""
+            )
+            try:
+                Versions(self.ir.metadata.app_resource_name).create_version(
+                    display_name=version_label, description=description
+                )
+                logger.info(
+                    "Created CXAS Version %s (%s).", version_label, description
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Failed to create CXAS Version %s: %s",
+                    version_label,
+                    exc,
+                )
+
+        # --- Optional bundle persist ----------------------------------------
+        if persist_bundle_path and bundle is not None:
+            self.persist_bundle(
+                bundle, persist_bundle_path, phase="stage1", status="ok"
+            )
+
+        return accepted_groupings
+
+    async def _run_stage1_consolidation(
+        self,
+        *,
+        bundle: "IRBundle",
+        gemini: GeminiGenerate,
+        grouping_callback: (
+            Callable[[MigrationIR, dict], Awaitable[dict | None]] | None
+        ),
+        grouping_json_path: str | None,
+        on_integrity_fail: str,
+        console: Console,
+    ) -> dict | None:
+        """The Gemini consolidation block of Stage 1. Returns the accepted
+        groupings, or ``None`` if the user aborted."""
+        # 1. Build dep summary + detect root.
+        analyzer = DependencyAnalyzer(self.source_agent_data)
+        dep_summary = {
+            "name_map": analyzer.name_map,
+            "type_map": analyzer.type_map,
+        }
+        root_key = structural_consolidator.detect_root_key(
+            self.ir, self.source_agent_data
+        )
+
+        # 2. Load or propose groupings.
+        consolidator = StructuralConsolidator(
+            self.ir, gemini, source_data=self.source_agent_data
+        )
+        if grouping_json_path:
+            groupings = structural_consolidator.load_grouping(
+                grouping_json_path
+            )
+            console.print(
+                f"[cyan]Loaded groupings from {grouping_json_path}[/]"
+            )
+        else:
+            console.print("[cyan]Asking Gemini to propose agent groupings…[/]")
+            groupings = await consolidator.propose_groupings(
+                root_key=root_key, dep_summary=dep_summary
+            )
+
+        # 3. Optional interactive review.
+        if grouping_callback is not None:
+            reviewed = await grouping_callback(self.ir, groupings)
+            if reviewed is None:
+                logger.warning(
+                    "Grouping review aborted — Stage 1 dedup applied, "
+                    "consolidation skipped."
+                )
+                return None
+            groupings = reviewed
+
+        # 4. Validate.
+        structural_consolidator.validate_groupings(self.ir, groupings, root_key)
+
+        # 5. Snapshot pre-consolidation IR (for integrity check + rollback).
+        bundle.pre_consolidation_ir = self.ir.model_copy(deep=True)
+
+        # 6. Consolidate IR + persist grouping.
+        pre_consolidation_ir = bundle.pre_consolidation_ir
+        self.ir = consolidator.consolidate(groupings)
+        bundle.grouping = groupings
+        try:
+            grouping_path = f"{bundle.config.target_name}_grouping.json"
+            structural_consolidator.persist_grouping(groupings, grouping_path)
+            logger.info("Persisted grouping → %s", grouping_path)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to persist grouping JSON: %s", exc)
+
+        # 7. Synthesize per-group PIF instructions.
+        status = await consolidator.synthesize_instructions(
+            self.ir, groupings, per_group_timeout_s=600
+        )
+        ok_count = sum(1 for v in status.values() if v == "ok")
+        timeout_count = sum(1 for v in status.values() if v == "timeout")
+        error_count = len(status) - ok_count - timeout_count
+        logger.info(
+            "Synthesis complete: %d ok, %d timeout, %d error",
+            ok_count,
+            timeout_count,
+            error_count,
+        )
+
+        # 8. Pre-deploy integrity check.
+        blocking, warnings = integrity_checks.check_consolidation_integrity(
+            self.ir, pre_consolidation_ir
+        )
+        if warnings:
+            for w in warnings:
+                logger.warning("integrity warning: %s", w)
+        if blocking:
+            for b in blocking:
+                logger.error("integrity blocking: %s", b)
+            if on_integrity_fail == "abort":
+                raise RuntimeError(
+                    f"Integrity check found {len(blocking)} blocking "
+                    f"error(s). Set on_integrity_fail='warn' or 'ignore' "
+                    f"to proceed anyway. First: {blocking[0]}"
+                )
+            elif on_integrity_fail == "warn":
+                logger.warning(
+                    "%d blocking integrity errors — continuing under "
+                    "on_integrity_fail='warn'.",
+                    len(blocking),
+                )
+            # "ignore" → silent continuation
+
+        # 9. Deploy consolidated agents.
+        console.print("\n[cyan]Pushing consolidated agents to CXAS…[/]")
+        await self._deploy_base_resources(is_update_pass=True)
+        await self._deploy_pending_agents(is_update_pass=True)
+
+        # 10. Topology link + set root + orphan cleanup.
+        try:
+            self.topology_linker.link_and_finalize_topology(
+                self.ir, self.source_agent_data
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Topology linking failed: %s", exc)
+
+        ok, msg = topology_wirer.set_app_root_agent(bundle)
+        if ok:
+            logger.info(msg)
+        elif msg:
+            logger.warning(msg)
+
+        keep_resources = {
+            a.resource_name for a in self.ir.agents.values() if a.resource_name
+        }
+        if self.ir.metadata.app_resource_name and keep_resources:
+            deleted, remaining = topology_wirer.delete_orphan_agents(
+                self.ir.metadata.app_resource_name,
+                keep_resources=keep_resources,
+            )
+            if deleted or remaining:
+                logger.info(
+                    "Orphan cleanup: %d deleted, %d remaining.",
+                    deleted,
+                    remaining,
+                )
+
+        return groupings
+
+    async def run_stage2(
+        self,
+        *,
+        version_label: str | None = "0.0.2",
+        generate_unit_tests: bool = False,
+        unit_tests_path: str | None = None,
+        run_lint: bool = False,
+        write_report_to: str | None = None,
+        bundle: "IRBundle | None" = None,
+        persist_bundle_path: str | None = None,
+        console: Console | None = None,
+    ) -> None:
+        """Run Stage 2: instruction state machines + tool mocks.
+
+        Optionally regenerates deterministic unit tests, runs
+        ``cxas pull`` + ``cxas lint``, and writes an
+        :class:`OptimizationReporter` audit markdown.
+        """
+        from cxas_scrapi.migration import (  # noqa: PLC0415
+            post_deploy_lint,
+            stage_runner,
+        )
+
+        console = console or Console()
+
+        # --- Optimize Stage 2 + redeploy ------------------------------------
+        optimizer = await stage_runner.run_stage_with_redeploy(
+            self, stage=2, console=console
+        )
+        stage_runner.merge_optimizer_logs_into_ir(self.ir, optimizer, "stage2")
+
+        # --- CXAS Version checkpoint ----------------------------------------
+        if version_label and self.ir.metadata.app_resource_name:
+            try:
+                Versions(self.ir.metadata.app_resource_name).create_version(
+                    display_name=version_label,
+                    description=(
+                        "Stage 2: instruction state machines + tool mocks"
+                    ),
+                )
+                logger.info("Created CXAS Version %s.", version_label)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Failed to create CXAS Version %s: %s",
+                    version_label,
+                    exc,
+                )
+
+        # --- Optional unit-test regeneration --------------------------------
+        test_counts: dict[str, int] = {}
+        if generate_unit_tests:
+            try:
+                gen = DeterministicEvalGenerator(self.ir)
+                by_agent: dict[str, list] = {}
+                for agent_name in self.ir.agents:
+                    cases = gen.generate_tests_for_agent(agent_name)
+                    if cases:
+                        by_agent[agent_name] = [
+                            tc.model_dump(mode="json") for tc in cases
+                        ]
+                test_counts = {n: len(v) for n, v in by_agent.items()}
+                if unit_tests_path:
+                    with open(unit_tests_path, "w") as f:
+                        json.dump(by_agent, f, indent=2, default=str)
+                    logger.info(
+                        "Regenerated %d tests for %d agents → %s",
+                        sum(test_counts.values()),
+                        len(test_counts),
+                        unit_tests_path,
+                    )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Unit test regeneration failed: %s", exc)
+
+        # --- Optional post-deploy lint --------------------------------------
+        lint_passed: bool | None = None
+        lint_output = ""
+        if run_lint:
+            try:
+                (
+                    lint_passed,
+                    lint_output,
+                ) = await post_deploy_lint.run_post_deploy_lint(self, console)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Lint did not run: %s", exc)
+
+        # --- Optional OptimizationReporter audit markdown -------------------
+        if write_report_to:
+            try:
+                stage1_logs = self.ir.optimization_logs.get("stages", {}).get(
+                    "stage1"
+                )
+                stage2_logs = self.ir.optimization_logs.get("stages", {}).get(
+                    "stage2"
+                )
+                reporter = OptimizationReporter()
+                target_name = (
+                    bundle.config.target_name if bundle else "(unknown)"
+                )
+                reporter.set_app_info(
+                    "(see bundle)",
+                    target_name,
+                    self.ir.metadata.app_resource_name or "",
+                    bundle.app_url if bundle else "",
+                )
+                if bundle and bundle.grouping:
+                    before_count = len(
+                        bundle.source_agent_data.playbooks
+                    ) + len(bundle.source_agent_data.flows)
+                    reporter.set_grouping(
+                        bundle.grouping,
+                        before_count=before_count,
+                        after_count=len(self.ir.agents),
+                        path=f"{target_name}_grouping.json",
+                    )
+                reporter.set_optimizer_logs(stage1_logs, stage2_logs)
+                if bundle and bundle.version_checkpoints:
+                    reporter.set_version_checkpoints(bundle.version_checkpoints)
+                if test_counts:
+                    reporter.set_unit_test_summary(
+                        test_counts, unit_tests_path or ""
+                    )
+                if lint_passed is not None:
+                    reporter.set_lint_result(lint_passed, lint_output)
+                reporter.export(write_report_to)
+                logger.info("Optimization report → %s", write_report_to)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Report generation failed: %s", exc)
+
+        # --- Optional bundle persist ----------------------------------------
+        if persist_bundle_path and bundle is not None:
+            self.persist_bundle(
+                bundle, persist_bundle_path, phase="stage2", status="ok"
+            )
+
+    async def run_stage3(
+        self,
+        *,
+        bundle: "IRBundle",
+        mode: str = "hub",
+        set_root: bool = True,
+        dry_run: bool = False,
+        persist_bundle_path: str | None = None,
+    ) -> tuple[int, int, int]:
+        """Stage 3: parent-child topology wiring for consolidated agents.
+
+        Requires a consolidated bundle (``bundle.grouping`` must be set).
+        Returns ``(updated, skipped, failed)`` counts from
+        :func:`topology_wirer.apply_topology`.
+        """
+        if not bundle.grouping:
+            raise RuntimeError(
+                "Stage 3 requires consolidated bundle.grouping; run "
+                "stage1 with consolidate=True first."
+            )
+
+        children = topology_wirer.compute_group_children(bundle, mode=mode)
+        updated, skipped, failed = topology_wirer.apply_topology(
+            bundle, children, dry_run=dry_run
+        )
+        logger.info(
+            "Stage 3 wiring: updated=%d skipped=%d failed=%d",
+            updated,
+            skipped,
+            failed,
+        )
+
+        if set_root and not dry_run:
+            ok, msg = topology_wirer.set_app_root_agent(bundle)
+            if ok:
+                logger.info(msg)
+            elif msg:
+                logger.warning(msg)
+
+        if persist_bundle_path and not dry_run:
+            self.persist_bundle(
+                bundle,
+                persist_bundle_path,
+                phase="stage3",
+                status="ok" if failed == 0 else "partial",
+                notes=(f"updated={updated} skipped={skipped} failed={failed}"),
+            )
+
+        return updated, skipped, failed
+
+    def persist_bundle(
+        self,
+        bundle: "IRBundle",
+        path: str,
+        *,
+        phase: str | None = None,
+        status: str = "ok",
+        notes: str = "",
+    ) -> str:
+        """Snapshot ``self.ir`` into the bundle and write it to ``path``.
+
+        Optionally appends a stage_history entry when ``phase`` is set.
+        Synchronous — pure local I/O. Returns ``path``.
+        """
+        bundle.ir = self.ir
+        if phase:
+            ir_bundle.append_stage(
+                bundle,
+                phase,
+                status,
+                started_at=datetime.now(),
+                notes=notes,
+            )
+        ir_bundle.save(bundle, path)
+        return path
 
     def _inject_system_variables(self, dynamic_params: list = None):
         """Injects global system variables required by migration tooling and
@@ -628,11 +1102,14 @@ class MigrationService:
 
         # --- 11. OPTIMIZATION MODULE (Track 3) ---
         if config.optimize_for_cxas:
+            # Pre-optimization snapshot — kept inline because it represents
+            # "state before any stage", not a stage output. The numbered
+            # stage Versions are created inside run_stage1 / run_stage2.
             logger.info("\n--- Creating Pre-Optimization Backup Version ---")
             try:
-                versions_client = Versions(target_app_resource_name)
-                versions_client.create_version(
-                    display_name="0.0.1", description="Initial agent version"
+                Versions(target_app_resource_name).create_version(
+                    display_name="0.0.1",
+                    description="Initial agent version",
                 )
                 logger.info(
                     "Successfully created pre-optimization version backup "
@@ -644,59 +1121,14 @@ class MigrationService:
                 )
 
             logger.info("\n--- Executing Hybrid Optimization Module ---")
-            optimizer = CXASOptimizer(self.ir, self.gemini_client)
-
-            # Stage 1 Optimization: Variables
-            logger.info("\n--- Executing Stage 1 Optimization (Variables) ---")
-            await optimizer.optimize_stage1()
-            logger.info(
-                "Pushing Stage 1 Variable Optimized Resources to CXAS..."
-            )
-            await self._deploy_base_resources(is_update_pass=True)
-            await self._deploy_pending_agents(is_update_pass=True)
-
-            logger.info(
-                "\n--- Creating Stage 1 Variables Optimized Version (0.0.2) ---"
-            )
-            try:
-                versions_client.create_version(
-                    display_name="0.0.2",
-                    description="Stage 1: Global variable optimization "
-                    "complete",
-                )
-                logger.info(
-                    "Successfully created Stage 1 variables optimized "
-                    "version in CXAS."
-                )
-            except Exception as e:
-                logger.warning(
-                    f"Failed to create Stage 1 variables optimized version: {e}"
-                )
-
-            # Stage 2 Optimization: Instructions & Tool Mocks
-            logger.info(
-                "\n--- Executing Stage 2 Optimization (Instructions & "
-                "Tool Mocks) ---"
-            )
-            await optimizer.optimize_stage2()
-            logger.info("Pushing Stage 2 Optimized Resources to CXAS...")
-            await self._deploy_base_resources(is_update_pass=True)
-            await self._deploy_pending_agents(is_update_pass=True)
-
-            logger.info("\n--- Creating Stage 2 Optimized Version (0.0.3) ---")
-            try:
-                versions_client.create_version(
-                    display_name="0.0.3",
-                    description="Stage 2: Playbook State Machine & Tool "
-                    "Mock optimization complete",
-                )
-                logger.info(
-                    "Successfully created Stage 2 optimized version in CXAS."
-                )
-            except Exception as e:
-                logger.warning(
-                    f"Failed to create Stage 2 optimized version: {e}"
-                )
+            # Stage 1: variable dedup only (no Gemini consolidation —
+            # consolidate=False default preserves the historical behavior
+            # of this branch). Version label "0.0.2" preserved for
+            # back-compat with the existing 0.0.1 / 0.0.2 / 0.0.3 scheme.
+            await self.run_stage1(version_label="0.0.2")
+            # Stage 2: instruction state machines + tool mocks.
+            # Version label "0.0.3" preserved for back-compat.
+            await self.run_stage2(version_label="0.0.3")
 
         logger.info("\n" + "=" * 50)
         logger.info("MIGRATION COMPLETE!")
