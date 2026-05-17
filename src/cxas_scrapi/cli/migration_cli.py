@@ -32,6 +32,7 @@ from cxas_scrapi.migration.data_models import (
     MigrationIR,
 )
 from cxas_scrapi.migration.dfcx_dep_analyzer import DependencyAnalyzer
+from cxas_scrapi.migration.ir_bundle import IRBundle
 from cxas_scrapi.migration.main_visualizer import MainVisualizer
 from cxas_scrapi.migration.service import MigrationService
 
@@ -103,6 +104,22 @@ class MigrationCLI:
 
         optimize_for_cxas = Confirm.ask("Optimize for CXAS?", default=True)
 
+        # Opt-in extras (all default OFF for back-compat). Consolidation +
+        # stage3 are nested under optimize_for_cxas because the consolidator
+        # operates on the optimized IR; stage3 wires the consolidated agents.
+        consolidate = optimize_for_cxas and Confirm.ask(
+            "Run structural consolidation (Gemini N→M agent grouping)?",
+            default=False,
+        )
+        run_stage3 = consolidate and Confirm.ask(
+            "Run Stage 3 topology wiring (parent-child links)?",
+            default=False,
+        )
+        persist_bundle = Confirm.ask(
+            "Persist IR bundle for stage-resume?",
+            default=False,
+        )
+
         gen_report = Confirm.ask("Generate Migration Report?", default=True)
         gen_unit_tests = Confirm.ask(
             "Generate Unit Tests (Auto-Fix)? [yellow]*feature coming*[/]",
@@ -130,6 +147,9 @@ class MigrationCLI:
             eval_runner_target=eval_runner_target,
             migration_version="2.0",
             optimize_for_cxas=optimize_for_cxas,
+            consolidate=consolidate,
+            run_stage3=run_stage3,
+            persist_bundle=persist_bundle,
         )
 
     def select_resources(self, agent_data: DFCXAgentIR) -> DFCXAgentIR:
@@ -405,6 +425,9 @@ class MigrationCLI:
                     source_cx_agent_id=agent_id,
                     config=config,
                 )
+                await self._run_post_migration_opt_ins(
+                    migration_service, config, filtered_data
+                )
 
             self.console.print(
                 f"🚀 Starting Migration to '{config.target_name}'..."
@@ -414,3 +437,87 @@ class MigrationCLI:
             # Display status after migration
             if hasattr(migration_service, "ir") and migration_service.ir:
                 self.display_status(migration_service.ir)
+
+    async def _run_post_migration_opt_ins(
+        self,
+        migration_service: MigrationService,
+        config: MigrationConfig,
+        filtered_data: DFCXAgentIR,
+    ) -> None:
+        """Run the opt-in post-migration steps the user enabled in
+        ``compose_config``: persist bundle, structural consolidation,
+        Stage 3 topology wiring.
+
+        Each step is independent and skipped silently if its flag is off.
+        Errors are logged but do not abort subsequent steps.
+        """
+        # Construct a bundle once if any opt-in needs one.
+        bundle = None
+        bundle_path = f"{config.target_name}_ir.json"
+        if config.persist_bundle or config.consolidate or config.run_stage3:
+            bundle = IRBundle(
+                config=config,
+                source_agent_data=filtered_data,
+                ir=migration_service.ir,
+                app_url=(
+                    f"https://ces.cloud.google.com/projects/"
+                    f"{config.project_id}/locations/"
+                    f"{migration_service.location}/apps/"
+                    f"{migration_service.ir.metadata.app_id}"
+                ),
+            )
+
+        # 1. Persist bundle after migrate (before any post-migration mutation
+        #    so resume from a fresh migrate is possible).
+        if config.persist_bundle and bundle is not None:
+            try:
+                migration_service.persist_bundle(
+                    bundle, bundle_path, phase="migrate", status="ok"
+                )
+                self.console.print(f"[green]IR bundle saved → {bundle_path}[/]")
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Bundle persist failed: %s", exc)
+
+        # 2. Structural consolidation (Gemini-driven N→M grouping).
+        #    MigrationCLI auto-accepts the proposed grouping
+        #    (grouping_callback=None); the skill provides an interactive
+        #    review TUI for the same flow.
+        if config.consolidate:
+            try:
+                await migration_service.run_stage1(
+                    consolidate=True,
+                    bundle=bundle,
+                    grouping_callback=None,
+                    # Post-consolidation Version — keeps the 0.0.1/0.0.2/0.0.3
+                    # sequence from the optimize_for_cxas branch intact and
+                    # adds 0.0.4 for the consolidation step.
+                    version_label="0.0.4",
+                    persist_bundle_path=(
+                        bundle_path if config.persist_bundle else None
+                    ),
+                )
+                self.console.print(
+                    "[green]Structural consolidation complete.[/]"
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Consolidation failed: %s", exc)
+                self.console.print(f"[yellow]Consolidation failed: {exc}[/]")
+
+        # 3. Stage 3 topology wiring (requires consolidation to have run
+        #    successfully — bundle.grouping is set inside run_stage1 above).
+        if config.run_stage3 and bundle is not None:
+            try:
+                updated, skipped, failed = await migration_service.run_stage3(
+                    bundle=bundle,
+                    mode="hub",
+                    persist_bundle_path=(
+                        bundle_path if config.persist_bundle else None
+                    ),
+                )
+                self.console.print(
+                    f"[green]Stage 3 wiring: updated={updated} "
+                    f"skipped={skipped} failed={failed}[/]"
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Stage 3 wiring failed: %s", exc)
+                self.console.print(f"[yellow]Stage 3 wiring failed: {exc}[/]")
