@@ -239,18 +239,26 @@ class CXASOptimizer:
                     continue
                 if new_v == "DELETE":
                     continue
+                # Escape `old_v` so variable names containing regex
+                # metacharacters (e.g. an LLM-emitted '15' which Python's
+                # `re` would interpret as a `{n}` quantifier) don't blow up
+                # `re.sub` with "nothing to repeat".
+                old_v_re = re.escape(old_v)
 
                 if is_python:
                     pattern = (
                         rf"(get_variable\s*\(\s*|set_variable\s*\(\s*|"
                         rf"(?:state|variables|payload|kwargs)"
                         rf"(?:\.get\s*\(\s*|\.set\s*\(\s*|\s*\[\s*))"
-                        rf"([\'\"]){old_v}([\'\"])"
+                        rf"([\'\"]){old_v_re}([\'\"])"
                     )
                     text = re.sub(pattern, rf"\g<1>\g<2>{new_v}\g<3>", text)
                 else:
+                    # Escape the literal braces around the variable name —
+                    # otherwise Python's `re` parses `{15}` as the {n}
+                    # quantifier (which has nothing to repeat).
                     text = re.sub(
-                        rf"{{{old_v}}}|`{old_v}`|\${old_v}\b",
+                        rf"\{{{old_v_re}\}}|`{old_v_re}`|\${old_v_re}\b",
                         f"{{{new_v}}}",
                         text,
                     )

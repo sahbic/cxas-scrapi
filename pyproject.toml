@@ -116,6 +116,10 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "src/cxas_scrapi/migration/prompts.py" = ["E501"]
+# Skill-local visualizer is dominated by HTML/CSS template strings; wrapping
+# them would hurt readability of the templates themselves. The Python code
+# in this file is line-length compliant; only template strings exceed.
+".agents/skills/cxas-dfcx-migration/scripts/_visualizer.py" = ["E501"]
 # Audio-analysis prompts are verbatim text intended for Gemini and must not be
 # reflowed; line-length doesn't apply to prompt content.
 "src/cxas_scrapi/utils/tracing/audio_analysis.py" = ["E501"]
