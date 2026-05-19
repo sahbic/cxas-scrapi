@@ -15,7 +15,6 @@
 import asyncio
 import logging
 import random
-import threading
 from typing import Any, Optional
 
 from google import genai
@@ -50,23 +49,13 @@ class GeminiGenerate:
             f"Initializing GeminiGenerate with model: {self.model_name} "
             f"(Max Concurrency: {max_concurrent_requests})"
         )
-        self.project_id = project_id
-        self.location = location
-        self.credentials = credentials
-        self._thread_local = threading.local()
+        self.client = genai.Client(
+            vertexai=True,
+            project=project_id,
+            location=location,
+            credentials=credentials,
+        )
         self.semaphore = asyncio.Semaphore(max_concurrent_requests)
-
-    @property
-    def client(self) -> genai.Client:
-        """Get or create a thread-local genai.Client instance."""
-        if not hasattr(self._thread_local, "client"):
-            self._thread_local.client = genai.Client(
-                vertexai=True,
-                project=self.project_id,
-                location=self.location,
-                credentials=self.credentials,
-            )
-        return self._thread_local.client
 
     def generate(
         self,
