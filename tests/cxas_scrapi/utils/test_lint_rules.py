@@ -1733,7 +1733,9 @@ def test_a006_root_agent_valid(tmp_path, context):
     f = tmp_path / "app.json"
     f.write_text('{"rootAgent": "billing_agent"}')
 
-    (tmp_path / "agents" / "billing_agent").mkdir(parents=True, exist_ok=True)
+    agent_dir = tmp_path / "agents" / "billing_agent"
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    (agent_dir / "billing_agent.json").write_text("{}")
     results = rule.check(f, f.read_text(), context)
     assert len(results) == 0
 

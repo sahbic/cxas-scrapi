@@ -303,4 +303,21 @@ class AppRootAgentValidation(Rule):
             )
             return results
 
+        # 5. Check if <rootAgent>.json exists
+        agent_json = agent_dir / f"{root_agent_name}.json"
+        if not agent_json.exists():
+            results.append(
+                self.make_result(
+                    file=rel,
+                    message=(
+                        f"Root agent '{root_agent_name}' exists but is "
+                        f"missing required '{root_agent_name}.json' file"
+                    ),
+                    fix=(
+                        f"Create file 'agents/"
+                        f"{root_agent_name}/{root_agent_name}.json'"
+                    ),
+                )
+            )
+
         return results
