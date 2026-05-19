@@ -129,6 +129,70 @@ class MigrationService:
         self.ir = {}
         self.source_agent_data = None
 
+    @classmethod
+    def restore_from_bundle(
+        cls,
+        bundle,
+        *,
+        project_id: str | None = None,
+        location: str | None = None,
+    ) -> "MigrationService":
+        """Recreate a `MigrationService` from a persisted :class:`IRBundle`.
+
+        Used by stage1 / stage2 / stage3 to resume work against an already
+        deployed app without going through a full :meth:`run_migration`
+        cycle. Populates the runtime attributes that `run_migration` would
+        normally set up after creating the app:
+
+          * `ir` and `source_agent_data` from the bundle
+          * `deployment_state` flagged as already deployed (so update-pass
+            deploys don't try to create the app again)
+          * `ps_agents` / `ps_tools` clients scoped to the existing app
+          * `topology_linker.ps_agents` / `code_block_migrator.ps_tools`
+            wired through to the new per-app clients
+          * `eval_generator` ready for unit-test regeneration
+
+        Args:
+            bundle: The :class:`IRBundle` to restore from.
+            project_id: Override the bundle's project ID. Defaults to
+                `bundle.config.project_id`.
+            location: Override the bundle's location. Defaults to whatever
+                :meth:`IRBundle.resolve_location` returns (parsed from
+                `bundle.app_url`, else "us").
+
+        Returns:
+            A `MigrationService` ready for update-pass deploys + Stage N
+            optimizer calls.
+        """
+        pid = project_id or bundle.config.project_id
+        loc = location or bundle.resolve_location()
+
+        service = cls(
+            project_id=pid,
+            location=loc,
+            default_model=bundle.config.model,
+        )
+        service.ir = bundle.ir
+        service.source_agent_data = bundle.source_agent_data
+        service.deployment_state = {
+            "app_created": True,
+            "vars_deployed": True,
+            "app_timeout_configured": True,
+            "app_model_configured": True,
+        }
+        service.eval_generator = DeterministicEvalGenerator(service.ir)
+
+        app_resource = service.ir.metadata.app_resource_name
+        if app_resource:
+            service.ps_agents = Agents(app_name=app_resource)
+            service.ps_tools = Tools(app_name=app_resource)
+            if getattr(service, "topology_linker", None) is not None:
+                service.topology_linker.ps_agents = service.ps_agents
+            if getattr(service, "code_block_migrator", None) is not None:
+                service.code_block_migrator.ps_tools = service.ps_tools
+
+        return service
+
     def _inject_system_variables(self, dynamic_params: list = None):
         """Injects global system variables required by migration tooling and
         callbacks.

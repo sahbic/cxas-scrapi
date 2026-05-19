@@ -33,8 +33,6 @@ from rich.console import Console
 from rich.logging import RichHandler
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import re as _re
-
 import _bundle  # noqa: E402
 import _grouping  # noqa: E402
 import _optimizer_runner  # noqa: E402
@@ -44,15 +42,13 @@ import _shared  # noqa: E402
 import _synthesis  # noqa: E402
 
 from cxas_scrapi.core.agents import Agents
-from cxas_scrapi.core.tools import Tools
 from cxas_scrapi.core.versions import Versions
-from cxas_scrapi.migration.data_models import MigrationIR
 from cxas_scrapi.migration.dfcx_dep_analyzer import DependencyAnalyzer
-from cxas_scrapi.migration.eval_generator import DeterministicEvalGenerator
+from cxas_scrapi.migration.integrity_checks import (
+    check_consolidation_integrity as _check_consolidation_integrity,
+)
 from cxas_scrapi.migration.service import MigrationService
 from cxas_scrapi.migration.structural_consolidator import (
-    AGENT_REF_RE,
-    SENTINEL_REFS,
     StructuralConsolidator,
     detect_root_key,
     load_grouping,
@@ -66,119 +62,12 @@ logger = logging.getLogger(__name__)
 console = Console()
 
 
-# ---------------------------------------------------------------------------
-# Pre-deploy integrity checks
-# ---------------------------------------------------------------------------
-
-# Shared by Stage 1 (which scans tool/var refs in instructions). Keep loose
-# enough to avoid false positives but tight enough to catch dangling refs.
-_PROMPT_VAR_RE = _re.compile(
-    r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}|`([a-zA-Z_][a-zA-Z0-9_]*)`|\$([a-zA-Z_][a-zA-Z0-9_]*)"
-)
-_TOOL_REF_RE = _re.compile(r"\{@TOOL:\s*([^}]+)\}")
-
-
 def _short_id(resource_name: str) -> str:
     return (
         resource_name.rsplit("/", maxsplit=1)[-1]
         if "/" in resource_name
         else resource_name
     )
-
-
-def _check_consolidation_integrity(
-    optimized_ir: MigrationIR, current_ir: MigrationIR
-) -> tuple[list[str], list[str]]:
-    """Validate the consolidated IR before deploy.
-
-    Returns (blocking_errors, warnings):
-    * Blocking errors → tool/toolset/agent-ref pointing at something that
-      doesn't exist. Would 100% cause runtime failures.
-    * Warnings → variable refs that don't appear in the parameters dict.
-      Many false positives expected (template syntax, prompt placeholders),
-      so these are surfaced but not fatal.
-    """
-    blocking: list[str] = []
-    warnings_: list[str] = []
-
-    available_tool_resources = {t.name for t in current_ir.tools.values()}
-    available_tool_ids = set(current_ir.tools.keys())
-    new_group_names = set(optimized_ir.agents.keys())
-    available_vars = set(current_ir.parameters.keys())
-    sentinel_lower = {s.lower() for s in SENTINEL_REFS} | {"end_session"}
-
-    for group_name, agent in optimized_ir.agents.items():
-        # 1. Tool refs (the agent.tools list)
-        for tool_ref in agent.tools:
-            short = _short_id(tool_ref)
-            if (
-                tool_ref not in available_tool_resources
-                and short not in available_tool_ids
-            ):
-                blocking.append(
-                    f"Group {group_name!r} references unknown tool "
-                    f"{short!r} (resource: {tool_ref})"
-                )
-
-        # 2. Toolset refs
-        for ts in agent.toolsets:
-            ts_id = ts.get("toolset", "") or ""
-            if not ts_id:
-                continue
-            short = _short_id(ts_id)
-            if (
-                ts_id not in available_tool_resources
-                and short not in available_tool_ids
-            ):
-                blocking.append(
-                    f"Group {group_name!r} references unknown toolset {short!r}"
-                )
-
-        # 3. {@TOOL: name} refs in the instruction
-        instruction = agent.instruction or ""
-        for raw_tool_ref in _TOOL_REF_RE.findall(instruction):
-            tool_name = raw_tool_ref.strip()
-            if tool_name in {"end_session"}:  # sentinel — auto-registered
-                continue
-            if tool_name not in available_tool_ids and not any(
-                _short_id(t.name) == tool_name or t.id == tool_name
-                for t in current_ir.tools.values()
-            ):
-                blocking.append(
-                    f"Group {group_name!r} instruction has "
-                    f"{{@TOOL: {tool_name}}} but no such tool exists"
-                )
-
-        # 4. {@AGENT: X} refs must point at a valid group OR sentinel.
-        for raw in AGENT_REF_RE.findall(instruction):
-            ref = raw.strip()
-            if ref.lower() in sentinel_lower:
-                continue
-            if ref not in new_group_names:
-                blocking.append(
-                    f"Group {group_name!r} instruction has "
-                    f"{{@AGENT: {ref}}} but no such group exists"
-                )
-
-        # 5. Variable refs — best-effort warning only.
-        unknown_vars: set[str] = set()
-        for match in _PROMPT_VAR_RE.findall(instruction):
-            v = next((g for g in match if g), None)
-            if v and v not in available_vars and not v.startswith("@"):
-                unknown_vars.add(v)
-        if unknown_vars:
-            sample = sorted(unknown_vars)[:5]
-            extra = (
-                f" (+{len(unknown_vars) - 5} more)"
-                if len(unknown_vars) > 5
-                else ""
-            )
-            warnings_.append(
-                f"Group {group_name!r}: {len(unknown_vars)} variable refs not "
-                f"in params dict: {', '.join(sample)}{extra}"
-            )
-
-    return blocking, warnings_
 
 
 def _delete_orphan_agents(
@@ -325,56 +214,17 @@ def _resolve_bundle_path(args) -> str:
 
 
 def _restore_service(bundle: _bundle.IRBundle, args) -> MigrationService:
-    """Recreate a MigrationService from a persisted IR bundle.
-
-    Sets the attributes that `run_migration` would normally populate so
-    `_deploy_base_resources(is_update_pass=True)` and
-    `_deploy_pending_agents(is_update_pass=True)` can run without going through
-    a full `run_migration` cycle:
-
-      * `deployment_state` — tells the service the app + vars exist.
-      * `ps_agents` / `ps_tools` — the per-app clients (normally created
-        AFTER the app exists, inside run_migration). Must be initialized
-        here pointing at the existing app.
-      * `eval_generator` — used by Stage 2's unit test regeneration.
-    """
-    project_id = args.project_id or bundle.config.project_id
-    location = args.location or _resolve_location_from_bundle(bundle)
-    service = MigrationService(
-        project_id=project_id,
-        location=location,
-        default_model=bundle.config.model,
+    """Delegate to `MigrationService.restore_from_bundle`, honoring the
+    skill's `--project-id` / `--location` CLI overrides."""
+    return MigrationService.restore_from_bundle(
+        bundle,
+        project_id=getattr(args, "project_id", None),
+        location=getattr(args, "location", None),
     )
-    service.ir = bundle.ir
-    service.source_agent_data = bundle.source_agent_data
-    service.deployment_state = {
-        "app_created": True,
-        "vars_deployed": True,
-        "app_timeout_configured": True,
-        "app_model_configured": True,
-    }
-    service.eval_generator = DeterministicEvalGenerator(service.ir)
-
-    # Per-app clients — `run_migration` builds these inline AFTER it
-    # creates the app. Without them, every create_agent / create_tool call
-    # fails with "'NoneType' object has no attribute 'create_*'".
-    app_resource = service.ir.metadata.app_resource_name
-    if app_resource:
-        service.ps_agents = Agents(app_name=app_resource)
-        service.ps_tools = Tools(app_name=app_resource)
-        # Wire downstream consumers that hold their own references.
-        if hasattr(service, "topology_linker"):
-            service.topology_linker.ps_agents = service.ps_agents
-        if hasattr(service, "code_block_migrator"):
-            service.code_block_migrator.ps_tools = service.ps_tools
-
-    return service
 
 
 def _resolve_location_from_bundle(bundle: _bundle.IRBundle) -> str:
-    if bundle.app_url and "/locations/" in bundle.app_url:
-        return bundle.app_url.split("/locations/")[1].split("/")[0]
-    return _prompts.DEFAULT_LOCATION
+    return bundle.resolve_location(default=_prompts.DEFAULT_LOCATION)
 
 
 async def _run(args) -> None:
