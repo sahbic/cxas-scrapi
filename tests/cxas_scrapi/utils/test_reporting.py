@@ -424,6 +424,48 @@ def test_run_all_evals_filtering(
 @patch("glob.glob")
 @patch("os.path.exists")
 @patch("os.path.isdir")
+def test_run_all_evals_substring_filtering(
+    mock_isdir,
+    mock_exists,
+    mock_glob,
+    mock_eval_utils,
+    mock_callback_evals,
+    mock_sim_evals,
+    mock_tool_evals,
+    mock_evaluations,
+):
+    mock_exists.return_value = True
+    mock_isdir.return_value = True
+    mock_glob.side_effect = [
+        ["evals/goldens/error.yaml", "evals/goldens/other.yaml"],
+        ["evals/tool_tests/tool1.yaml"],
+        ["evals/simulations/sim1.yaml"],
+    ]
+
+    # Mock load_golden_evals_from_yaml to return empty list
+    mock_eval_utils.return_value.load_golden_evals_from_yaml.return_value = []
+
+    run_all_evals(
+        app_name="projects/p",
+        filter_files=["ERROR"],
+        goldens_dir="evals/goldens/",
+        tool_test_file="evals/tool_tests/",
+        simulation_dir="evals/simulations/",
+    )
+
+    mock_eval_utils.return_value.load_golden_evals_from_yaml.assert_called_once_with(
+        "evals/goldens/error.yaml"
+    )
+
+
+@patch("cxas_scrapi.utils.reporting.Evaluations")
+@patch("cxas_scrapi.utils.reporting.ToolEvals")
+@patch("cxas_scrapi.utils.reporting.SimulationEvals")
+@patch("cxas_scrapi.utils.reporting.CallbackEvals")
+@patch("cxas_scrapi.utils.reporting.EvalUtils")
+@patch("glob.glob")
+@patch("os.path.exists")
+@patch("os.path.isdir")
 @patch("cxas_scrapi.utils.reporting.RunEvaluationOperationMetadata")
 @patch("yaml.safe_load")
 @patch("builtins.open", new_callable=mock_open)

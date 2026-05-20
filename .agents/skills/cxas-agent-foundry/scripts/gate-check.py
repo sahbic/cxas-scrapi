@@ -170,32 +170,33 @@ def gate2_agent_hierarchy(app_name) -> GateResult:
         app = apps.get_app(app_name)
         agents_client = Agents(app_name=app_name, user_agent_extension=USER_AGENT_EXTENSION)
         agents_map = agents_client.get_agents_map(reverse=True)
+        agents_by_resource = agents_client.get_agents_map(reverse=False)
     except Exception as e:
         r.passed = False
         r.error = f"Failed to fetch agents: {e}"
         _print_gate_footer(r)
         return r
 
-    root_agent_name = app.root_agent.split("/")[-1] if app.root_agent else None
-    print(f"  Root agent: {root_agent_name}")
+    root_agent_display_name = agents_by_resource.get(app.root_agent) if app.root_agent else None
+    print(f"  Root agent: {root_agent_display_name}")
     print(f"  Agents found: {len(agents_map)}")
 
     for name in agents_map:
-        is_root = (name == root_agent_name)
+        is_root = (name == root_agent_display_name)
         marker = " (ROOT)" if is_root else ""
         print(f"    - {name}{marker}")
 
     r.findings.append({
-        "root_agent": root_agent_name,
+        "root_agent": root_agent_display_name,
         "agents": list(agents_map.keys()),
     })
 
-    if not root_agent_name:
+    if not app.root_agent:
         r.passed = False
         r.error = "App has no root_agent set"
-    elif root_agent_name not in agents_map:
+    elif root_agent_display_name not in agents_map:
         r.passed = False
-        r.error = f"Root agent {root_agent_name} listed on app but not in agents list"
+        r.error = f"Root agent {app.root_agent} listed on app but not in agents list"
     else:
         r.passed = True
 

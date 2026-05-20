@@ -852,3 +852,125 @@ class TestSimToGolden(unittest.TestCase):
             self.assertIn("- It is 20 degrees.", yaml_output)
             self.assertIn("Must say hi", yaml_output)
             self.assertIn("key: val", yaml_output)
+
+
+@patch("cxas_scrapi.evals.simulation_evals.Sessions")
+@patch("cxas_scrapi.evals.simulation_evals.LLMUserConversation")
+def test_simulation_evals_accumulates_vars(
+    mock_llm_conv_class, mock_sessions_class
+):
+    mock_sessions = mock_sessions_class.return_value
+    mock_eval_conv = mock_llm_conv_class.return_value
+
+    # Multi-turn conversational flow with session vars on Turn 1 and Turn 2
+    mock_eval_conv.next_user_utterance.side_effect = [
+        ("event: welcome", {"disclaimer_accepted": True}),
+        ("I want to order a hammer", {"product_brand": "DEWALT"}),
+        ("", {}),
+    ]
+    mock_eval_conv.steps_progress = []
+
+    # Mock agent responses
+    mock_response_1 = MagicMock()
+    mock_response_1.session.name = (
+        "projects/test/locations/us/apps/123-abc/sessions/123"
+    )
+    mock_output_1 = MagicMock()
+    mock_output_1.text = "Sure, what brand?"
+    mock_response_1.outputs = [mock_output_1]
+
+    mock_response_2 = MagicMock()
+    mock_response_2.session.name = (
+        "projects/test/locations/us/apps/123-abc/sessions/123"
+    )
+    mock_output_2 = MagicMock()
+    mock_output_2.text = "Hammer ordered."
+    mock_response_2.outputs = [mock_output_2]
+
+    captured_variables = []
+
+    def mock_run_side_effect(*args, **kwargs):
+        vars_arg = kwargs.get("variables")
+        captured_variables.append(
+            dict(vars_arg) if vars_arg is not None else None
+        )
+        if len(captured_variables) == 1:
+            return mock_response_1
+        return mock_response_2
+
+    mock_sessions.run.side_effect = mock_run_side_effect
+
+    app_name = "projects/test/locations/us/apps/123-abc"
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+        with patch("cxas_scrapi.core.apps.AgentServiceClient"):
+            simulator = SimulationEvals(app_name=app_name)
+
+    test_case = {"steps": []}
+    simulator.simulate_conversation(
+        test_case=test_case,
+        session_id="123",
+        console_logging=False,
+    )
+
+    # Verify that the variables accumulated sequentially across turns
+    assert len(captured_variables) == 2
+    # Turn 1: Should pass only Turn 1's variables
+    assert captured_variables[0] == {"disclaimer_accepted": True}
+    # Turn 2: Should pass accumulated variables with Turn 1 and 2
+    assert captured_variables[1] == {
+        "disclaimer_accepted": True,
+        "product_brand": "DEWALT",
+    }
+    assert mock_sessions.run.call_count == 2
+
+
+@patch("cxas_scrapi.evals.simulation_evals.Sessions")
+@patch("cxas_scrapi.evals.simulation_evals.LLMUserConversation")
+def test_simulation_evals_adds_final_agent_response_on_session_ended(
+    mock_llm_conv_class, mock_sessions_class
+):
+    mock_sessions = mock_sessions_class.return_value
+    mock_eval_conv = mock_llm_conv_class.return_value
+
+    # Setup direct single-turn call that ends session immediately
+    mock_eval_conv.next_user_utterance.side_effect = [
+        ("event: welcome", {}),
+        ("", {}),
+    ]
+    mock_eval_conv.steps_progress = []
+
+    # Mock agent response containing a clean end_session tool call
+    mock_response = MagicMock()
+    mock_output = MagicMock()
+    mock_output.text = "Transferring to associate now."
+
+    mock_tc = MagicMock()
+    mock_tc.tool = "escalate_human"
+
+    mock_tc_end = MagicMock()
+    mock_tc_end.tool = "end_session"
+
+    mock_output.tool_calls.tool_calls = [mock_tc, mock_tc_end]
+    mock_response.outputs = [mock_output]
+    mock_sessions.run.side_effect = [mock_response]
+
+    app_name = "projects/test/locations/us/apps/123-abc"
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+        with patch("cxas_scrapi.core.apps.AgentServiceClient"):
+            simulator = SimulationEvals(app_name=app_name)
+
+    test_case = {"steps": []}
+    with patch(
+        "cxas_scrapi.core.sessions.Sessions._expand_pb_struct",
+        return_value={},
+    ):
+        simulator.simulate_conversation(
+            test_case=test_case,
+            session_id="123",
+            console_logging=False,
+        )
+
+    # Verify that final agent text is appended to transcript on session end
+    mock_eval_conv._add_agent_response.assert_any_call(
+        "Transferring to associate now."
+    )

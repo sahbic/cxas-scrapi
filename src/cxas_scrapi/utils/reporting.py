@@ -1545,7 +1545,10 @@ def run_all_evals(
                 golden_files = [
                     f
                     for f in golden_files
-                    if os.path.basename(f) in filter_files
+                    if any(
+                        pattern.lower() in os.path.basename(f).lower()
+                        for pattern in filter_files
+                    )
                 ]
 
             for gf in golden_files:
@@ -1618,7 +1621,12 @@ def run_all_evals(
 
             if filter_files:
                 tool_files = [
-                    f for f in tool_files if os.path.basename(f) in filter_files
+                    f
+                    for f in tool_files
+                    if any(
+                        pattern.lower() in os.path.basename(f).lower()
+                        for pattern in filter_files
+                    )
                 ]
 
             test_cases = []
@@ -1651,7 +1659,12 @@ def run_all_evals(
             sim_files = glob.glob(os.path.join(simulation_dir, "*.yaml"))
             if filter_files:
                 sim_files = [
-                    f for f in sim_files if os.path.basename(f) in filter_files
+                    f
+                    for f in sim_files
+                    if any(
+                        pattern.lower() in os.path.basename(f).lower()
+                        for pattern in filter_files
+                    )
                 ]
 
             if sim_files:
