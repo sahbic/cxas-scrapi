@@ -39,12 +39,10 @@ from rich.logging import RichHandler
 
 # Skill-local helpers
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import _bundle  # noqa: E402
-import _phase_tracker  # noqa: E402
 import _prompts  # noqa: E402
 import _shared  # noqa: E402
-import _visualizer  # noqa: E402
 
+from cxas_scrapi.migration import html_preview, ir_bundle, phase_tracker
 from cxas_scrapi.migration.config import AGENT_MODELS
 from cxas_scrapi.migration.data_models import MigrationConfig
 from cxas_scrapi.migration.dfcx_dep_analyzer import DependencyAnalyzer
@@ -149,7 +147,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 async def _run(args) -> None:
-    tracker = _phase_tracker.PhaseTracker(console)
+    tracker = phase_tracker.PhaseTracker(console)
 
     # Phase 0: auth
     if not _shared.auth_check(console):
@@ -171,12 +169,12 @@ async def _run(args) -> None:
         with tracker.phase("Preview HTML", "topology + per-resource trees"):
             try:
                 analyzer_pre = DependencyAnalyzer(agent_data)
-                preview_path = _visualizer.generate_html_report(
+                preview_path = html_preview.generate_html_report(
                     agent_data,
                     analyzer_pre,
                     output_path=f"{inputs['target_name']}_tree_preview.html",
                 )
-                stats = _visualizer.collect_stats(agent_data, analyzer_pre)
+                stats = html_preview.collect_stats(agent_data, analyzer_pre)
                 est = stats["estimated_minutes"]
                 console.print(
                     f"[bold green]Preview ready:[/] {preview_path}\n"
@@ -259,7 +257,7 @@ async def _run(args) -> None:
 
     # Phase 6: persist IR bundle. service.persist_bundle handles the
     # IR snapshot + stage_history append + atomic file write.
-    bundle = _bundle.IRBundle(
+    bundle = ir_bundle.IRBundle(
         config=config,
         source_agent_data=agent_data,
         ir=service.ir,

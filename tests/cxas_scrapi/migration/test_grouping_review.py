@@ -16,7 +16,6 @@ the structure of the rendered Rich trees, and the return contract
 
 from __future__ import annotations
 
-import sys
 from io import StringIO
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -214,25 +213,3 @@ async def test_interactive_review_repropose_then_accept():
     consolidator.propose_groupings.assert_awaited_once_with(
         "RootAgent", {"some": "summary"}, "please split G1"
     )
-
-
-# ---------------------------------------------------------------------------
-# Skill-side re-export shim still works
-# ---------------------------------------------------------------------------
-
-
-def test_skill_grouping_shim_reexports_interactive_review():
-    """`_grouping.interactive_review` and `_grouping.render_ir_tree`
-    are still importable from the skill scripts directory — they're
-    re-exports from the promoted module."""
-    sys.path.insert(0, ".agents/skills/cxas-dfcx-migration/scripts")
-    try:
-        import _grouping  # noqa: PLC0415
-
-        assert (
-            _grouping.interactive_review is grouping_review.interactive_review
-        )
-        assert _grouping.render_ir_tree is grouping_review.render_ir_tree
-        assert _grouping.render_diff is grouping_review.render_diff
-    finally:
-        sys.path.pop(0)

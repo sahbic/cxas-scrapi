@@ -138,15 +138,17 @@ The skill is a thin orchestrator. **Every migration / optimization step lives in
 | Post-deploy lint | `migration/post_deploy_lint.py` |
 | IR bundle persistence | `migration/ir_bundle.py:IRBundle` |
 
-Skill-local helpers (UX glue only — every one is either a re-export shim or InquirerPy prompt wiring):
+Skill-local helpers (UX glue only — InquirerPy prompts + thin
+delegations to `MigrationCLI`):
 
 - `_prompts.py` — InquirerPy prompt library (matches agent-foundry).
-- `_phase_tracker.py` — re-export shim for `migration/phase_tracker.py` (terminal phase timing markers).
-- `_grouping.py` — re-export shim for `cli/grouping_review.py` (the interactive review TUI).
-- `_visualizer.py` — re-export shim for `migration/html_preview.py` (HTML preview / StageReport).
-- `_bundle.py` — re-export shim for `migration/ir_bundle.py`.
-- `_lint.py` / `_reporter.py` / `_optimizer_runner.py` — re-export shims for their respective `migration/*` modules.
 - `_shared.py` — InquirerPy variants of project/location prompts, source loader, and `MigrationConfig` assembly; plus pure delegations to `MigrationCLI` for `check_auth`, `run_dependency_analysis`, `select_resources`, `show_visualizations`.
+
+The stage scripts now import the promoted modules directly:
+``from cxas_scrapi.migration import ir_bundle, phase_tracker``
+(plus ``html_preview`` in ``migrate.py``) and call sites use the
+canonical module names (``ir_bundle.IRBundle``, ``phase_tracker.PhaseTracker``,
+``html_preview.generate_html_report``) — no re-export shim layer.
 
 The skill's stage scripts (`migrate.py` / `stage1.py` / `stage2.py` / `stage3.py`) are now ~80-200 line shells: parse args → restore service from bundle → call the matching `MigrationService.run_stage*` → print summary. There is no orchestration logic left in the skill — only InquirerPy prompts and the HTML preview that's specific to the skill's pre-flight UX.
 

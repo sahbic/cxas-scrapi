@@ -28,11 +28,10 @@ from rich.console import Console
 from rich.logging import RichHandler
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import _bundle  # noqa: E402
-import _phase_tracker  # noqa: E402
 import _prompts  # noqa: E402
 import _shared  # noqa: E402
 
+from cxas_scrapi.migration import ir_bundle, phase_tracker
 from cxas_scrapi.migration.service import MigrationService
 
 logger = logging.getLogger(__name__)
@@ -76,7 +75,7 @@ def _build_parser() -> argparse.ArgumentParser:
 def _resolve_bundle_path(args) -> str:
     if args.ir_bundle:
         return args.ir_bundle
-    path = _bundle.find_default_bundle(args.target_name)
+    path = ir_bundle.find_default_bundle(args.target_name)
     if not path:
         console.print(
             "[red]No IR bundle found.[/] Run migrate.py / stage1.py first."
@@ -86,7 +85,7 @@ def _resolve_bundle_path(args) -> str:
 
 
 async def _run(args) -> None:
-    tracker = _phase_tracker.PhaseTracker(console)
+    tracker = phase_tracker.PhaseTracker(console)
 
     if not _shared.auth_check(console):
         if not args.yes and not _prompts.prompt_yes_no(
@@ -96,7 +95,7 @@ async def _run(args) -> None:
 
     bundle_path = _resolve_bundle_path(args)
     console.print(f"[cyan]Loading IR bundle:[/] {bundle_path}")
-    bundle = _bundle.load(bundle_path)
+    bundle = ir_bundle.load(bundle_path)
     target_name = bundle.config.target_name
 
     service = MigrationService.restore_from_bundle(
