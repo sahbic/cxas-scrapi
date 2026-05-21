@@ -6,8 +6,6 @@ z_adhoc/
 *scratch.py
 .agent/
 *.tar
-uv.lock
-
 
 # `cxas trace` workspace — local audio downloads, smoke-test outputs,
 # and per-developer trace.yaml. Users create their own.
