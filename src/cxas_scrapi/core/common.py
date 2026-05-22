@@ -198,6 +198,24 @@ class Common:
         return None
 
     @staticmethod
+    def _get_app_name(resource_name: str) -> Optional[str]:
+        """Extract fully-qualified app name from a resource string."""
+        if not resource_name:
+            return None
+        try:
+            parts = resource_name.split("/")
+            if (
+                len(parts) >= 6
+                and parts[0] == "projects"
+                and parts[2] == "locations"
+                and parts[4] == "apps"
+            ):
+                return "/".join(parts[:6])
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
     def _tokenize_textproto(text):
         token_pattern = re.compile(
             r'(?P<STRING>"(?:\\.|[^"\\])*")|'

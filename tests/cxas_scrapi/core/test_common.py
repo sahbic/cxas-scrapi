@@ -71,6 +71,20 @@ def test_location_extraction():
     assert Common._get_location("invalid-format") is None
 
 
+def test_app_name_extraction():
+    assert (
+        Common._get_app_name(
+            "projects/test-proj/locations/us/apps/abc/conversations/123"
+        )
+        == "projects/test-proj/locations/us/apps/abc"
+    )
+    assert (
+        Common._get_app_name("projects/test-proj/locations/us/apps/abc")
+        == "projects/test-proj/locations/us/apps/abc"
+    )
+    assert Common._get_app_name("invalid-format") is None
+
+
 def test_unwrap_value():
     assert Common.unwrap_value({"string_value": "hello"}) == "hello"
     assert Common.unwrap_value({"number_value": 42}) == 42
