@@ -16,6 +16,7 @@ import io
 import logging
 import threading
 import wave
+from typing import Any, Dict, Optional
 
 from google.api_core import client_options
 from google.cloud import texttospeech
@@ -31,7 +32,11 @@ class AudioTransformer:
         pass
 
     def text_to_speech_bytes(
-        self, text: str, credentials, project_id: str
+        self,
+        text: str,
+        credentials,
+        project_id: str,
+        voice_config: Optional[Dict[str, Any]] = None,
     ) -> dict:
         """Converts text to speech and returns a dictionary with text and
         audio bytes without saving to disk.
@@ -46,8 +51,12 @@ class AudioTransformer:
 
         client = AudioTransformer._client
         synthesis_input = texttospeech.SynthesisInput(text=text)
+        voice_config = voice_config or {}
+        language_code = voice_config.get("language_code", "en-US")
+        voice_name = voice_config.get("voice_name", "en-US-Standard-A")
+
         voice = texttospeech.VoiceSelectionParams(
-            language_code="en-US", name="en-US-Standard-A"
+            language_code=language_code, name=voice_name
         )
         audio_config = texttospeech.AudioConfig(
             audio_encoding=texttospeech.AudioEncoding.LINEAR16,

@@ -799,6 +799,7 @@ class Sessions(Common):
         turn_count: Optional[int] = None,
         modality: Modality | str = Modality.TEXT,
         use_tool_fakes: bool = False,
+        voice_config: Optional[Dict[str, Any]] = None,
     ):
         """Sends inputs to a Conversational Agents Session and returns the
         response.
@@ -979,6 +980,7 @@ class Sessions(Common):
                             text=input,
                             credentials=self.creds,
                             project_id=self.project_id,
+                            voice_config=voice_config,
                         )
                     )
                 for input_data in input_audio_bytes:
