@@ -117,6 +117,7 @@ class EnhancedSimRunner(SimulationEvals):
         session_id: Optional[str] = None,
         console_logging: bool = True,
         modality: str = "text",
+        voice_config: Optional[Dict[str, Any]] = None,
     ) -> LLMUserConversation:
         """Run a simulated conversation with variable injection."""
         if session_id is None:
@@ -129,7 +130,6 @@ class EnhancedSimRunner(SimulationEvals):
         )
 
         session_params = test_case.get("session_parameters", {})
-
         if console_logging:
             print("Starting simulated conversation...")
             if session_params:
@@ -151,6 +151,8 @@ class EnhancedSimRunner(SimulationEvals):
                         "text": user_utterance,
                         "modality": modality,
                     }
+                    if voice_config is not None:
+                        kwargs["voice_config"] = voice_config
                     # Inject variables on first turn only
                     if first_turn and session_params:
                         kwargs["variables"] = session_params
