@@ -990,3 +990,51 @@ def test_simulation_evals_init_with_rate_limiter(mock_sessions):
         app_name,
         rate_limiter=mock_rate_limiter,
     )
+
+
+@patch("cxas_scrapi.evals.simulation_evals.Sessions")
+@patch("cxas_scrapi.evals.simulation_evals.LLMUserConversation")
+def test_simulation_evals_voice_config(
+    mock_llm_conv_class, mock_sessions_class
+):
+    mock_sessions = mock_sessions_class.return_value
+    mock_eval_conv = mock_llm_conv_class.return_value
+
+    mock_eval_conv.next_user_utterance.side_effect = [
+        ("event: welcome", {}),
+        ("Bonjour", {}),
+        ("", {}),
+    ]
+    mock_eval_conv.steps_progress = []
+
+    mock_response_1 = MagicMock()
+    mock_response_1.outputs = [MagicMock(text="Bonjour!")]
+    mock_response_2 = MagicMock()
+    mock_response_2.outputs = [MagicMock(text="Au revoir!")]
+    mock_sessions.run.side_effect = [mock_response_1, mock_response_2]
+
+    app_name = "projects/test/locations/us/apps/123-abc"
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+        with patch("cxas_scrapi.core.apps.AgentServiceClient"):
+            simulator = SimulationEvals(app_name=app_name)
+
+    # Custom voice_config passed via simulate_conversation
+    custom_voice = {"language_code": "fr-FR", "voice_name": "fr-FR-Standard-G"}
+    
+    # Test 1: Passed as function argument
+    simulator.simulate_conversation(
+        test_case={"steps": []},
+        session_id="123",
+        console_logging=False,
+        voice_config=custom_voice,
+    )
+
+    # Verify that Sessions.run was called with the custom voice_config
+    mock_sessions.run.assert_any_call(
+        session_id="123",
+        event="welcome",
+        variables={},
+        modality="text",
+        voice_config=custom_voice,
+    )
+

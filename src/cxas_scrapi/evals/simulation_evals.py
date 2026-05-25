@@ -489,6 +489,7 @@ class SimulationEvals(Apps):
         variables: Dict[str, Any],
         modality: str,
         console_logging: bool,
+        voice_config: Optional[Dict[str, Any]] = None,
     ) -> Any:
         """Sends a request to the CES Agent with exponential backoff for
         transient errors.
@@ -502,6 +503,7 @@ class SimulationEvals(Apps):
                         event=user_utterance.removeprefix("event:").strip(),
                         variables=variables,
                         modality=modality,
+                        **({"voice_config": voice_config} if voice_config is not None else {}),
                     )
                 elif user_utterance.startswith("dtmf:"):
                     response = self.sessions_client.run(
@@ -509,6 +511,7 @@ class SimulationEvals(Apps):
                         dtmf=user_utterance.removeprefix("dtmf:").strip(),
                         variables=variables,
                         modality=modality,
+                        **({"voice_config": voice_config} if voice_config is not None else {}),
                     )
                 else:
                     response = self.sessions_client.run(
@@ -516,6 +519,7 @@ class SimulationEvals(Apps):
                         text=user_utterance,
                         variables=variables,
                         modality=modality,
+                        **({"voice_config": voice_config} if voice_config is not None else {}),
                     )
                 break
             except Exception as e:
@@ -549,6 +553,7 @@ class SimulationEvals(Apps):
         session_id: Optional[str] = None,
         console_logging: bool = True,
         modality: str = "text",
+        voice_config: Optional[Dict[str, Any]] = None,
     ) -> LLMUserConversation:
         """Runs the simulated conversation loop.
 
@@ -582,11 +587,12 @@ class SimulationEvals(Apps):
 
         while user_utterance:
             response = self._send_request_with_retry(
-                session_id,
-                user_utterance,
-                accumulated_variables,
-                modality,
-                console_logging,
+                session_id=session_id,
+                user_utterance=user_utterance,
+                variables=accumulated_variables,
+                modality=modality,
+                console_logging=console_logging,
+                voice_config=voice_config,
             )
             if not response:
                 break
