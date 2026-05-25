@@ -303,8 +303,10 @@ def _generate_html_report(
 
     reports_dir = os.path.join(project_dir, "eval-reports", "comparisons")
     os.makedirs(reports_dir, exist_ok=True)
-    return os.path.join(
-        reports_dir, f"compare_{args.source[:8]}_{args.target[:8]}.html"
+    return os.path.abspath(
+        os.path.join(
+            reports_dir, f"compare_{args.source[:8]}_{args.target[:8]}.html"
+        )
     )
 
   # Render Diff Blocks HTML
