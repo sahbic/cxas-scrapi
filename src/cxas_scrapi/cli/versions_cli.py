@@ -27,11 +27,150 @@ from typing import Any
 
 from cxas_scrapi.cli.app import _resolve_app_args
 from cxas_scrapi.core.versions import Versions
+from jinja2 import Template
 import pandas as pd
 from rich.console import Console
 from rich.table import Table
 
 logger = logging.getLogger(__name__)
+
+
+# --- Templates for output message and html report ---
+CONSOLE_SUMMARY_TEMPLATE = """
+[bold blue]Comparing versions for App:[/] [bold magenta]{{ display_name }}[/] [dim]({{ app_name }})[/]
+  [dim]Source:[/] {{ source }} [bold cyan]({{ source_display_name }})[/]
+  [dim]Target:[/] {{ target }} [bold cyan]({{ target_display_name }})[/]
+
+[bold blue]============================================================
+  📊 SUMMARY OF APP VERSION DIFF
+============================================================[/]
+⚙️ [bold]Global App Config[/]: {{ app_status }}
+{% if total_agents > 0 -%}
+📝 [bold]Agents ({{ total_agents }} changed)[/]:
+{% if added_agents %}  [green]➕ Added   :[/] {{ added_agents }}
+{% endif -%}
+{% if removed_agents %}  [red]➖ Removed :[/] {{ removed_agents }}
+{% endif -%}
+{% if modified_agents %}  [yellow]🔄 Modified:[/] {{ modified_agents }}
+{% endif -%}
+{%- else -%}
+📝 [bold]Agents[/]: [green]No changes detected[/]
+{% endif %}
+{% if total_tools > 0 -%}
+🛠️ [bold]Tools ({{ total_tools }} changed)[/]:
+{% if added_tools %}  [green]➕ Added   :[/] {{ added_tools }}
+{% endif -%}
+{% if removed_tools %}  [red]➖ Removed :[/] {{ removed_tools }}
+{% endif -%}
+{% if modified_tools %}  [yellow]🔄 Modified:[/] {{ modified_tools }}
+{% endif -%}
+{%- else -%}
+🛠️ [bold]Tools[/]: [green]No changes detected[/]
+{% endif %}
+{% if total_guardrails > 0 -%}
+🛡️ [bold]Guardrails ({{ total_guardrails }} changed)[/]:
+{% if added_guardrails %}  [green]➕ Added   :[/] {{ added_guardrails }}
+{% endif -%}
+{% if removed_guardrails %}  [red]➖ Removed :[/] {{ removed_guardrails }}
+{% endif -%}
+{% if modified_guardrails %}  [yellow]🔄 Modified:[/] {{ modified_guardrails }}
+{% endif -%}
+{%- endif %}
+{% if total_toolsets > 0 -%}
+🧰 [bold]Toolsets ({{ total_toolsets }} changed)[/]:
+{% if added_toolsets %}  [green]➕ Added   :[/] {{ added_toolsets }}
+{% endif -%}
+{% if removed_toolsets %}  [red]➖ Removed :[/] {{ removed_toolsets }}
+{% endif -%}
+{% if modified_toolsets %}  [yellow]🔄 Modified:[/] {{ modified_toolsets }}
+{% endif -%}
+{%- endif %}
+[dim]* Use --verbose to print detailed line-by-line diffs to terminal[/]
+[dim]* Use --web to force open/view the full interactive HTML diff report[/]
+"""
+
+HTML_DIFF_BLOCK_TEMPLATE = """
+<details style="margin: 12px 0; border: 1px solid #ddd; border-radius: 6px; background: #fff; overflow: hidden;" open>
+    <summary style="cursor: pointer; font-weight: bold; padding: 12px 16px; background: #f6f8fa; border-bottom: 1px solid #ddd; outline: none; user-select: none;">
+        📂 {{ title }} <span style="color: #666; font-weight: normal; font-size: 0.85em; margin-left: 8px;">({{ path }})</span>
+    </summary>
+    <pre style="margin: 0; padding: 16px; font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; line-height: 1.6; background: #fafafa; white-space: pre-wrap; word-wrap: break-word; word-break: break-all;">{{ content | safe }}</pre>
+</details>
+"""
+
+HTML_REPORT_TEMPLATE = """<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>App Version Diff</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 40px 20px;
+    background: #f8f9fa;
+    color: #212529;
+  }
+  .card {
+    background: #fff;
+    padding: 24px 32px;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+    margin-bottom: 24px;
+    border: 1px solid #e9ecef;
+  }
+  .header-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #dee2e6;
+    padding-bottom: 16px;
+    margin-bottom: 20px;
+  }
+  h1 {
+    margin: 0;
+    color: #1e293b;
+  }
+  .version-badge {
+    font-family: monospace;
+    background: #e2e8f0;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 0.9em;
+  }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <div class="header-meta">
+    <h1>🔄 App Version Diff</h1>
+    <span style="font-size:0.9em;color:#64748b;">Generated: {{ timestamp }}</span>
+  </div>
+
+  <table style="width: 100%; border-collapse: collapse; margin-bottom: 16px;">
+    <tr>
+      <td style="padding: 8px 0; color:#64748b; width:120px;"><b>App Name:</b></td>
+      <td style="padding: 8px 0;"><b>{{ display_name }}</b></td>
+    </tr>
+    <tr>
+      <td style="padding: 8px 0; color:#64748b;"><b>Source Version (a):</b></td>
+      <td style="padding: 8px 0;"><span class="version-badge">{{ source }}</span> <span style="color:#64748b;margin-left:8px;">({{ source_display }})</span></td>
+    </tr>
+    <tr>
+      <td style="padding: 8px 0; color:#64748b;"><b>Target Version (b):</b></td>
+      <td style="padding: 8px 0;"><span class="version-badge">{{ target }}</span> <span style="color:#64748b;margin-left:8px;">({{ target_display }})</span></td>
+    </tr>
+  </table>
+</div>
+
+{{ diff_blocks | safe }}
+
+</body>
+</html>
+"""
+
 
 
 def _upload_to_codebin(title: str, content: str) -> str | None:
@@ -135,8 +274,6 @@ def app_versions_list(args: argparse.Namespace) -> None:
   except Exception as e:
     console.print(f"[red]Failed to list app versions: {e}[/]")
     sys.exit(1)
-
-
 def _print_console_summary(
     console: Console,
     display_name: str,
@@ -147,105 +284,57 @@ def _print_console_summary(
     summary_stats: dict[str, Any],
 ) -> None:
   """Layer 1: Print high-level console summary of configuration drift."""
-  console.print(
-      "\n[bold blue]Comparing versions for App:[/] "
-      f"[bold magenta]{display_name}[/] [dim]({app_name})[/]"
-  )
-  console.print(
-      f"  [dim]Source:[/] {args.source} [bold cyan]({v1.display_name})[/]"
-  )
-  console.print(
-      f"  [dim]Target:[/] {args.target} [bold cyan]({v2.display_name})[/]"
-  )
-
-  console.print(
-      "\n[bold blue]"
-      + "=" * 60
-      + "\n  📊 SUMMARY OF APP VERSION DIFF\n"
-      + "=" * 60
-      + "[/]"
-  )
-
   app_ch = summary_stats["app_config_changed"]
   app_status = "[yellow]Modified[/]" if app_ch else "[green]Unchanged[/]"
-  console.print(f"⚙️ [bold]Global App Config[/]: {app_status}")
 
-  # Agents summary
-  add_ag, rem_ag, mod_ag = (
-      summary_stats["added_agents"],
-      summary_stats["removed_agents"],
-      summary_stats["modified_agents"],
-  )
-  tot_ag = len(add_ag) + len(rem_ag) + len(mod_ag)
-  if tot_ag == 0:
-    console.print("📝 [bold]Agents[/]: [green]No changes detected[/]")
-  else:
-    console.print(f"📝 [bold]Agents ({tot_ag} changed)[/]:")
-    if add_ag:
-      console.print(f"  [green]➕ Added   :[/] {add_ag}")
-    if rem_ag:
-      console.print(f"  [red]➖ Removed :[/] {rem_ag}")
-    if mod_ag:
-      console.print(f"  [yellow]🔄 Modified:[/] {mod_ag}")
+  add_ag = summary_stats["added_agents"]
+  rem_ag = summary_stats["removed_agents"]
+  mod_ag = summary_stats["modified_agents"]
+  total_agents = len(add_ag) + len(rem_ag) + len(mod_ag)
 
-  # Tools summary
-  add_tl, rem_tl, mod_tl = (
-      summary_stats["added_tools"],
-      summary_stats["removed_tools"],
-      summary_stats["modified_tools"],
-  )
-  tot_tl = len(add_tl) + len(rem_tl) + len(mod_tl)
-  if tot_tl == 0:
-    console.print("🛠️ [bold]Tools[/]: [green]No changes detected[/]")
-  else:
-    console.print(f"🛠️ [bold]Tools ({tot_tl} changed)[/]:")
-    if add_tl:
-      console.print(f"  [green]➕ Added   :[/] {add_tl}")
-    if rem_tl:
-      console.print(f"  [red]➖ Removed :[/] {rem_tl}")
-    if mod_tl:
-      console.print(f"  [yellow]🔄 Modified:[/] {mod_tl}")
+  add_tl = summary_stats["added_tools"]
+  rem_tl = summary_stats["removed_tools"]
+  mod_tl = summary_stats["modified_tools"]
+  total_tools = len(add_tl) + len(rem_tl) + len(mod_tl)
 
-  # Guardrails summary
-  add_gr, rem_gr, mod_gr = (
-      summary_stats.get("added_guardrails", []),
-      summary_stats.get("removed_guardrails", []),
-      summary_stats.get("modified_guardrails", []),
-  )
-  tot_gr = len(add_gr) + len(rem_gr) + len(mod_gr)
-  if tot_gr > 0:
-    console.print(f"🛡️ [bold]Guardrails ({tot_gr} changed)[/]:")
-    if add_gr:
-      console.print(f"  [green]➕ Added   :[/] {add_gr}")
-    if rem_gr:
-      console.print(f"  [red]➖ Removed :[/] {rem_gr}")
-    if mod_gr:
-      console.print(f"  [yellow]🔄 Modified:[/] {mod_gr}")
+  add_gr = summary_stats.get("added_guardrails", [])
+  rem_gr = summary_stats.get("removed_guardrails", [])
+  mod_gr = summary_stats.get("modified_guardrails", [])
+  total_guardrails = len(add_gr) + len(rem_gr) + len(mod_gr)
 
-  # Toolsets summary
-  add_ts, rem_ts, mod_ts = (
-      summary_stats.get("added_toolsets", []),
-      summary_stats.get("removed_toolsets", []),
-      summary_stats.get("modified_toolsets", []),
-  )
-  tot_ts = len(add_ts) + len(rem_ts) + len(mod_ts)
-  if tot_ts > 0:
-    console.print(f"🧰 [bold]Toolsets ({tot_ts} changed)[/]:")
-    if add_ts:
-      console.print(f"  [green]➕ Added   :[/] {add_ts}")
-    if rem_ts:
-      console.print(f"  [red]➖ Removed :[/] {rem_ts}")
-    if mod_ts:
-      console.print(f"  [yellow]🔄 Modified:[/] {mod_ts}")
+  add_ts = summary_stats.get("added_toolsets", [])
+  rem_ts = summary_stats.get("removed_toolsets", [])
+  mod_ts = summary_stats.get("modified_toolsets", [])
+  total_toolsets = len(add_ts) + len(rem_ts) + len(mod_ts)
 
-  console.print(
-      "\n[dim]* Use --verbose to print detailed line-by-line diffs to "
-      "terminal[/]"
+  summary_rendered = Template(CONSOLE_SUMMARY_TEMPLATE).render(
+      display_name=display_name,
+      app_name=app_name,
+      source=args.source,
+      source_display_name=v1.display_name,
+      target=args.target,
+      target_display_name=v2.display_name,
+      app_status=app_status,
+      total_agents=total_agents,
+      added_agents=add_ag,
+      removed_agents=rem_ag,
+      modified_agents=mod_ag,
+      total_tools=total_tools,
+      added_tools=add_tl,
+      removed_tools=rem_tl,
+      modified_tools=mod_tl,
+      total_guardrails=total_guardrails,
+      added_guardrails=add_gr,
+      removed_guardrails=rem_gr,
+      modified_guardrails=mod_gr,
+      total_toolsets=total_toolsets,
+      added_toolsets=add_ts,
+      removed_toolsets=rem_ts,
+      modified_toolsets=mod_ts,
   )
-  console.print(
-      "[dim]* Use --web to force open/view the full interactive HTML "
-      "diff report[/]"
-  )
+  console.print(summary_rendered)
+
+
 
 
 def _print_verbose_diff(
@@ -337,98 +426,42 @@ def _generate_html_report(
             f'<span style="color:#444;display:block;">{escaped}</span>'
         )
 
-    block_html = f"""
-        <details style="margin: 12px 0; border: 1px solid #ddd; border-radius: 6px; background: #fff; overflow: hidden;" open>
-            <summary style="cursor: pointer; font-weight: bold; padding: 12px 16px; background: #f6f8fa; border-bottom: 1px solid #ddd; outline: none; user-select: none;">
-                📂 {block['title']} <span style="color: #666; font-weight: normal; font-size: 0.85em; margin-left: 8px;">({block['path']})</span>
-            </summary>
-            <pre style="margin: 0; padding: 16px; font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; line-height: 1.6; background: #fafafa; white-space: pre-wrap; word-wrap: break-word; word-break: break-all;">{"".join(lines_html)}</pre>
-        </details>
-        """
+    content_html = "".join(lines_html)
+    block_html = Template(HTML_DIFF_BLOCK_TEMPLATE).render(
+        title=block["title"],
+        path=block["path"],
+        content=content_html,
+    )
     html_diff_blocks.append(block_html)
 
   # Wrap in Webpage Template
-  webpage = f"""<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>App Version Diff</title>
-<style>
-  body {{
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    max-width: 1100px;
-    margin: 0 auto;
-    padding: 40px 20px;
-    background: #f8f9fa;
-    color: #212529;
-  }}
-  .card {{
-    background: #fff;
-    padding: 24px 32px;
-    border-radius: 8px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.05);
-    margin-bottom: 24px;
-    border: 1px solid #e9ecef;
-  }}
-  .header-meta {{
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    border-bottom: 1px solid #dee2e6;
-    padding-bottom: 16px;
-    margin-bottom: 20px;
-  }}
-  h1 {{
-    margin: 0;
-    color: #1e293b;
-  }}
-  .version-badge {{
-    font-family: monospace;
-    background: #e2e8f0;
-    padding: 4px 8px;
-    border-radius: 4px;
-    font-size: 0.9em;
-  }}
-</style>
-</head>
-<body>
+  diff_blocks_joined = "".join(html_diff_blocks)
+  if not diff_blocks_joined:
+    diff_blocks_joined = '<div class="card" style="text-align:center;color:#27ae60;font-weight:bold;">✅ No differences found between versions.</div>'
 
-<div class="card">
-  <div class="header-meta">
-    <h1>🔄 App Version Diff</h1>
-    <span style="font-size:0.9em;color:#64748b;">Generated: {time.strftime("%Y-%m-%d %H:%M")}</span>
-  </div>
+  webpage = Template(HTML_REPORT_TEMPLATE).render(
+      timestamp=time.strftime("%Y-%m-%d %H:%M"),
+      display_name=display_name,
+      source=args.source,
+      source_display=v1.display_name,
+      target=args.target,
+      target_display=v2.display_name,
+      diff_blocks=diff_blocks_joined,
+  )
 
-  <table style="width: 100%; border-collapse: collapse; margin-bottom: 16px;">
-    <tr>
-      <td style="padding: 8px 0; color:#64748b; width:120px;"><b>App Name:</b></td>
-      <td style="padding: 8px 0;"><b>{display_name}</b></td>
-    </tr>
-    <tr>
-      <td style="padding: 8px 0; color:#64748b;"><b>Source Version (a):</b></td>
-      <td style="padding: 8px 0;"><span class="version-badge">{args.source}</span> <span style="color:#64748b;margin-left:8px;">({v1.display_name})</span></td>
-    </tr>
-    <tr>
-      <td style="padding: 8px 0; color:#64748b;"><b>Target Version (b):</b></td>
-      <td style="padding: 8px 0;"><span class="version-badge">{args.target}</span> <span style="color:#64748b;margin-left:8px;">({v2.display_name})</span></td>
-    </tr>
-  </table>
-</div>
+  gosso_path = "/google/bin/releases/gosso/gosso"
+  use_codebin = os.path.exists(gosso_path)
 
-{"".join(html_diff_blocks) if html_diff_blocks else '<div class="card" style="text-align:center;color:#27ae60;font-weight:bold;">✅ No differences found between versions.</div>'}
-
-</body>
-</html>
-"""
   codebin_url = None
-  try:
-    console.print("  [dim]Uploading report to Codebin...[/]")
-    codebin_url = _upload_to_codebin(
-        f"Compare: {args.source[:8]} vs {args.target[:8]} ({display_name})",
-        webpage,
-    )
-  except Exception as e:
-    console.print(f"  [yellow]⚠️ Codebin upload failed: {e}[/]")
+  if use_codebin:
+    try:
+      console.print("  [dim]Uploading report to Codebin...[/]")
+      codebin_url = _upload_to_codebin(
+          f"Compare: {args.source[:8]} vs {args.target[:8]} ({display_name})",
+          webpage,
+      )
+    except Exception as e:
+      console.print(f"  [yellow]⚠️ Codebin upload failed: {e}[/]")
 
   # Set report URL and resolve disk writes only if required
   if codebin_url:
@@ -442,15 +475,16 @@ def _generate_html_report(
       except Exception as e:
         console.print(f"  [yellow]⚠️ Could not save local report: {e}[/]")
   else:
-    # Fallback: Codebin failed, so we write a temporary fallback report on disk
+    # Fallback: Codebin failed or not used, so we write a local report on disk
     try:
       report_path = _resolve_report_path(args)
       with open(report_path, "w") as f:
         f.write(webpage)
       report_url = f"file://{report_path}"
-      console.print(
-          "  [yellow]⚠️ Upload failed. Saved fallback local report.[/]"
-      )
+      if use_codebin:
+        console.print(
+            "  [yellow]⚠️ Upload failed. Saved fallback local report.[/]"
+        )
     except Exception as e:
       report_url = "Failed to generate report"
       console.print(f"  [red]❌ Could not save fallback local report: {e}[/]")
