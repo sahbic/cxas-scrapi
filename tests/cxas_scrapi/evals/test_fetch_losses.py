@@ -16,6 +16,7 @@ import json
 import os
 import sys
 from unittest.mock import MagicMock, patch
+
 import pytest
 
 # Add the skill directory to sys.path so we can import fetch_losses
@@ -216,9 +217,14 @@ def test_main_with_time_filters(mock_argv, mock_insights_class, tmp_path):
         fetch_losses.main()
     assert e.value.code == 0
 
-    # Verify list_conversations was called with correct filter (including default loss filter) and FULL view
+    # Verify list_conversations was called with correct filter (including
+    # default loss filter) and FULL view
     mock_insights.list_conversations.assert_called_once_with(
-        filter_str='agent_id="test-app" AND -labels.sessionContained:"true" AND create_time >= "2026-05-20T00:00:00Z" AND create_time <= "2026-05-26T23:59:59Z"',
+        filter_str=(
+            'agent_id="test-app" AND -labels.sessionContained:"true" '
+            'AND create_time >= "2026-05-20T00:00:00Z" '
+            'AND create_time <= "2026-05-26T23:59:59Z"'
+        ),
         view="FULL",
         page_size=100,
         max_pages=1,
@@ -258,9 +264,13 @@ def test_main_with_custom_filter(mock_argv, mock_insights_class, tmp_path):
         fetch_losses.main()
     assert e.value.code == 0
 
-    # Verify list_conversations was called with custom filter instead of default loss filter and FULL view
+    # Verify list_conversations was called with custom filter instead of
+    # default loss filter and FULL view
     mock_insights.list_conversations.assert_called_once_with(
-        filter_str='agent_id="test-app" AND labels.sessionContained="true" AND labels.someKey="someValue"',
+        filter_str=(
+            'agent_id="test-app" AND labels.sessionContained="true" '
+            'AND labels.someKey="someValue"'
+        ),
         view="FULL",
         page_size=100,
         max_pages=1,

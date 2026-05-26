@@ -102,15 +102,24 @@ def main():
     )
     parser.add_argument(
         "--start-time",
-        help="RFC 3339 timestamp for start of time period (e.g. 2026-05-20T00:00:00Z)",
+        help=(
+            "RFC 3339 timestamp for start of time period "
+            "(e.g. 2026-05-20T00:00:00Z)"
+        ),
     )
     parser.add_argument(
         "--end-time",
-        help="RFC 3339 timestamp for end of time period (e.g. 2026-05-26T23:59:59Z)",
+        help=(
+            "RFC 3339 timestamp for end of time period "
+            "(e.g. 2026-05-26T23:59:59Z)"
+        ),
     )
     parser.add_argument(
         "--filter",
-        help="Custom API filter string to append (overrides default loss filter)",
+        help=(
+            "Custom API filter string to append "
+            "(overrides default loss filter)"
+        ),
     )
     parser.add_argument(
         "--output-file",
@@ -144,7 +153,10 @@ def main():
     filter_arg = " AND ".join(filter_parts)
 
     logger.info(
-        f"Fetching recent conversations with filter: {filter_arg} (target limit raw: {args.limit})..."
+        "Fetching recent conversations with filter: %s "
+        "(target limit: %d)...",
+        filter_arg,
+        args.limit,
     )
 
     max_pages = (args.limit + 99) // 100
@@ -159,7 +171,8 @@ def main():
     conversations = conversations[: args.limit]
     logger.info(f"Retrieved {len(conversations)} raw conversation summaries.")
 
-    # With server-side filtering, all retrieved conversations are target conversations
+    # With server-side filtering, all retrieved conversations are target
+    # conversations
     losses = conversations
     total_losses = len(losses)
     logger.info("Identified %d target conversations.", total_losses)
