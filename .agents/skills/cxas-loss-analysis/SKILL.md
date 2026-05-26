@@ -21,8 +21,13 @@ Verify that the user has provided the following required parameters:
 - `location`: Insights location (e.g., `us`).
 - `app_id`: Target CXAS App ID (e.g., `db9ee866-28db-458b-b835-78137c974779`).
 - `output_dir`: Directory where the final report and test cases will be saved.
-- `limit`: Maximum raw conversations to inspect (default: 1000).
-- `loss_limit`: Maximum loss transcripts to fetch and analyze (default: 100).
+
+And the following optional parameters if they wish to scope the analysis:
+- `start_time`: RFC 3339 timestamp for start of time period (e.g., `2026-05-20T00:00:00Z`).
+- `end_time`: RFC 3339 timestamp for end of time period (e.g., `2026-05-26T23:59:59Z`).
+- `filter`: Custom API filter string to apply (overrides the default loss filter `-labels.sessionContained="true"`).
+- `limit`: Maximum conversations to retrieve (default: 2000).
+- `loss_limit`: Maximum loss transcripts to fetch and analyze (default: 500).
 
 ### Step 2: Extract Loss Transcripts
 Run the lightweight data-extraction script to dump the loss transcripts into chunked JSON files in your workspace.
@@ -35,7 +40,10 @@ python3 -P .agents/skills/cxas-loss-analysis/scripts/fetch_losses.py \
   --app-id "{app_id}" \
   --limit {limit} \
   --loss-limit {loss_limit} \
-  --output-file "{output_dir}/raw_losses.json"
+  --output-file "{output_dir}/raw_losses.json" \
+  [--start-time "{start_time}"] \
+  [--end-time "{end_time}"] \
+  [--filter "{filter}"]
 ```
 
 *Note: Always run python using the virtual environment's executable with the `-P` flag (e.g., `.venv/bin/python -P`) to avoid path pollution.*
@@ -82,11 +90,7 @@ Compile your analysis into a structured Markdown report and write it to `{output
 
 ## Executive Summary
 
-- **Total Conversations Inspected**: {total_inspected}
-- **Non-Contained Conversations (Losses)**: {total_losses}
-- **Containment Rate**: {containment_rate}%
-
-*Note: The containment rate is calculated over the entire set of inspected conversations. A random sample of {loss_limit} non-contained conversations was selected for detailed manual analysis and clustering. Not all conversations were analyzed.*
+A random sample of up to {loss_limit} conversations matching the filter was selected for detailed manual analysis and clustering to identify key patterns.
 
 ## Loss Patterns Distribution
 

@@ -61,6 +61,27 @@ def test_list_conversations(mock_request, mock_google_auth):
 
 
 @patch("requests.request")
+def test_list_conversations_with_view(mock_request, mock_google_auth):
+    """Test Insights.list_conversations with view parameter."""
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "conversations": [],
+        "nextPageToken": None,
+    }
+    mock_request.return_value = mock_response
+
+    client = Insights(project_id="p", location="l")
+    _ = client.list_conversations(filter_str="some_filter", view="FULL")
+
+    # Verify API was called with view param
+    mock_request.assert_called_once()
+    called_args = mock_request.call_args
+    assert called_args[1]["params"]["view"] == "FULL"
+    assert called_args[1]["params"]["filter"] == "some_filter"
+
+
+@patch("requests.request")
 def test_get_conversation(mock_request, mock_google_auth):
     """Test Insights.get_conversation."""
     mock_response = MagicMock()

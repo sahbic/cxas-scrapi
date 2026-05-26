@@ -117,6 +117,7 @@ class Insights(Common):
     def list_conversations(
         self,
         filter_str: Optional[str] = None,
+        view: Optional[str] = None,
         page_size: int = 100,
         max_pages: int = 5,
     ) -> List[Dict[str, Any]]:
@@ -125,6 +126,8 @@ class Insights(Common):
         params = {"pageSize": page_size}
         if filter_str:
             params["filter"] = filter_str
+        if view:
+            params["view"] = view
 
         results = []
         page_token = None

@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import argparse
-import concurrent.futures
 import json
 import logging
 import os
@@ -51,17 +50,14 @@ def ccai_to_cxas_dict(ccai_conv: Dict[str, Any]) -> Dict[str, Any]:
     return {"turns": turns}
 
 
-def extract_transcript(
-    client: Insights, conv_summary: Dict[str, Any]
-) -> Optional[Dict[str, str]]:
+def extract_transcript(conv: Dict[str, Any]) -> Optional[Dict[str, str]]:
     """Extracts conversation transcript and formats to YAML."""
-    conv_name = conv_summary.get("name")
+    conv_name = conv.get("name")
     conv_id = conv_name.split("/")[-1]
-    logger.info(f"Fetching detailed transcript for {conv_id}...")
+    logger.info(f"Extracting transcript for {conv_id}...")
 
     try:
-        details = client.get_conversation(conv_name)
-        cxas_dict = ccai_to_cxas_dict(details)
+        cxas_dict = ccai_to_cxas_dict(conv)
 
         # Leverage ConversationHistory to format to FDE YAML structure
         yaml_dict = ConversationHistory.conversation_dict_to_yaml(cxas_dict)
@@ -95,14 +91,26 @@ def main():
     parser.add_argument(
         "--limit",
         type=int,
-        default=1000,
-        help="Max raw conversations to inspect (default: 1000)",
+        default=2000,
+        help="Max conversations to retrieve (default: 2000)",
     )
     parser.add_argument(
         "--loss-limit",
         type=int,
-        default=100,
-        help="Max loss transcripts to extract (default: 100)",
+        default=500,
+        help="Max loss transcripts to extract (default: 500)",
+    )
+    parser.add_argument(
+        "--start-time",
+        help="RFC 3339 timestamp for start of time period (e.g. 2026-05-20T00:00:00Z)",
+    )
+    parser.add_argument(
+        "--end-time",
+        help="RFC 3339 timestamp for end of time period (e.g. 2026-05-26T23:59:59Z)",
+    )
+    parser.add_argument(
+        "--filter",
+        help="Custom API filter string to append (overrides default loss filter)",
     )
     parser.add_argument(
         "--output-file",
@@ -123,14 +131,25 @@ def main():
         user_agent_extension=USER_AGENT_EXTENSION,
     )
 
-    filter_arg = f'agent_id="{args.app_id}"'
+    filter_parts = [f'agent_id="{args.app_id}"']
+    if args.filter:
+        filter_parts.append(args.filter)
+    else:
+        filter_parts.append('-labels.sessionContained:"true"')
+
+    if args.start_time:
+        filter_parts.append(f'create_time >= "{args.start_time}"')
+    if args.end_time:
+        filter_parts.append(f'create_time <= "{args.end_time}"')
+    filter_arg = " AND ".join(filter_parts)
+
     logger.info(
-        f"Fetching recent conversations (target limit raw: {args.limit})..."
+        f"Fetching recent conversations with filter: {filter_arg} (target limit raw: {args.limit})..."
     )
 
     max_pages = (args.limit + 99) // 100
     conversations = insights_client.list_conversations(
-        filter_str=filter_arg, page_size=100, max_pages=max_pages
+        filter_str=filter_arg, view="FULL", page_size=100, max_pages=max_pages
     )
 
     if not conversations:
@@ -140,20 +159,13 @@ def main():
     conversations = conversations[: args.limit]
     logger.info(f"Retrieved {len(conversations)} raw conversation summaries.")
 
-    # Filter for non-contained conversations (losses)
-    losses = []
-    for c in conversations:
-        contained = c.get("labels", {}).get("sessionContained")
-        if contained != "true" and contained is not True:
-            losses.append(c)
-
+    # With server-side filtering, all retrieved conversations are target conversations
+    losses = conversations
     total_losses = len(losses)
-    logger.info(
-        "Identified %d non-contained conversations (losses).", total_losses
-    )
+    logger.info("Identified %d target conversations.", total_losses)
 
     if not losses:
-        logger.warning("No non-contained conversations found for this app.")
+        logger.warning("No conversations found matching the filter.")
         sys.exit(0)
 
     # Randomly sample losses
@@ -171,20 +183,15 @@ def main():
             len(target_losses),
         )
 
-    # Download detailed transcripts in parallel
+    # Process transcripts
     extracted_data = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        futures = [
-            executor.submit(extract_transcript, insights_client, conv)
-            for conv in target_losses
-        ]
-        for fut in concurrent.futures.as_completed(futures):
-            res = fut.result()
-            if res:
-                extracted_data.append(res)
+    for conv in target_losses:
+        res = extract_transcript(conv)
+        if res:
+            extracted_data.append(res)
 
     logger.info(
-        f"Successfully downloaded {len(extracted_data)} loss transcripts."
+        f"Successfully processed {len(extracted_data)} loss transcripts."
     )
 
     # Save to output JSON file and chunk transcripts
@@ -208,17 +215,8 @@ def main():
             json.dump(chunk_data, f, indent=2)
         chunks.append(chunk_file_path)
 
-    total_inspected = len(conversations)
-    containment_rate = 0.0
-    if total_inspected > 0:
-        containment_rate = round(
-            ((total_inspected - total_losses) / total_inspected) * 100, 2
-        )
-
     output_payload = {
-        "total_inspected": total_inspected,
         "total_losses": total_losses,
-        "containment_rate": containment_rate,
         "chunks": chunks,
     }
 

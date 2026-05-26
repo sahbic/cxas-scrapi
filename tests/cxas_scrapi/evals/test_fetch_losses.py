@@ -16,6 +16,7 @@ import json
 import os
 import sys
 from unittest.mock import MagicMock, patch
+import pytest
 
 # Add the skill directory to sys.path so we can import fetch_losses
 sys.path.append(
@@ -59,12 +60,9 @@ def test_ccai_to_cxas_dict():
     )
 
 
-@patch("cxas_scrapi.core.insights.Insights")
-def test_extract_transcript(mock_insights_class):
-    mock_client = MagicMock()
-    mock_insights_class.return_value = mock_client
-
-    mock_client.get_conversation.return_value = {
+def test_extract_transcript():
+    conv = {
+        "name": "projects/p/locations/l/conversations/conv_123",
         "transcript": {
             "transcriptSegments": [
                 {
@@ -74,9 +72,7 @@ def test_extract_transcript(mock_insights_class):
             ]
         }
     }
-
-    conv_summary = {"name": "projects/p/locations/l/conversations/conv_123"}
-    result = fetch_losses.extract_transcript(mock_client, conv_summary)
+    result = fetch_losses.extract_transcript(conv)
 
     assert result is not None
     assert result["conversation_id"] == "conv_123"
@@ -89,46 +85,45 @@ def test_main_end_to_end(mock_argv, mock_insights_class, tmp_path):
     mock_insights = MagicMock()
     mock_insights_class.return_value = mock_insights
 
-    # Mock list_conversations: 2 contained, 3 non-contained
+    # Mock list_conversations returning FULL conversations
     mock_insights.list_conversations.return_value = [
-        {
-            "name": "projects/p/locations/l/conversations/c1",
-            "labels": {"sessionContained": "true"},
-        },
         {
             "name": "projects/p/locations/l/conversations/c2",
             "labels": {"sessionContained": "false"},
-        },
-        {
-            "name": "projects/p/locations/l/conversations/c3",
-            "labels": {"sessionContained": "true"},
-        },
-        {
-            "name": "projects/p/locations/l/conversations/c4",
-            "labels": {},
-        },  # missing = loss
-        {
-            "name": "projects/p/locations/l/conversations/c5",
-            "labels": {"sessionContained": "false"},
-        },
-    ]
-
-    # Mock get_conversation for details
-    def mock_get_conv(name):
-        conv_id = name.split("/")[-1]
-        return {
-            "name": name,
             "transcript": {
                 "transcriptSegments": [
                     {
                         "segmentParticipant": {"role": "CUSTOMER"},
-                        "text": f"utterance from {conv_id}",
+                        "text": "utterance from c2",
                     }
                 ]
             },
-        }
-
-    mock_insights.get_conversation.side_effect = mock_get_conv
+        },
+        {
+            "name": "projects/p/locations/l/conversations/c4",
+            "labels": {},
+            "transcript": {
+                "transcriptSegments": [
+                    {
+                        "segmentParticipant": {"role": "CUSTOMER"},
+                        "text": "utterance from c4",
+                    }
+                ]
+            },
+        },
+        {
+            "name": "projects/p/locations/l/conversations/c5",
+            "labels": {"sessionContained": "false"},
+            "transcript": {
+                "transcriptSegments": [
+                    {
+                        "segmentParticipant": {"role": "CUSTOMER"},
+                        "text": "utterance from c5",
+                    }
+                ]
+            },
+        },
+    ]
 
     output_file = tmp_path / "raw_losses.json"
 
@@ -153,14 +148,20 @@ def test_main_end_to_end(mock_argv, mock_insights_class, tmp_path):
     # Run main
     fetch_losses.main()
 
+    # Verify list_conversations was called with default filter and FULL view
+    mock_insights.list_conversations.assert_called_once_with(
+        filter_str='agent_id="test-app" AND -labels.sessionContained:"true"',
+        view="FULL",
+        page_size=100,
+        max_pages=1,
+    )
+
     # Verify output file exists and contains the expected fields
     assert output_file.exists()
 
     with open(output_file) as f:
         data = json.load(f)
-        assert data["total_inspected"] == 5
         assert data["total_losses"] == 3
-        assert data["containment_rate"] == 40.0
         assert len(data["chunks"]) == 1
 
         chunk_file = data["chunks"][0]
@@ -177,3 +178,90 @@ def test_main_end_to_end(mock_argv, mock_insights_class, tmp_path):
             assert "c5" in conv_ids
             assert "c1" not in conv_ids
             assert "c3" not in conv_ids
+
+
+@patch("fetch_losses.Insights")
+@patch("sys.argv")
+def test_main_with_time_filters(mock_argv, mock_insights_class, tmp_path):
+    mock_insights = MagicMock()
+    mock_insights_class.return_value = mock_insights
+
+    mock_insights.list_conversations.return_value = []
+
+    output_file = tmp_path / "raw_losses.json"
+
+    # Set CLI args with time filters
+    sys.argv = [
+        "fetch_losses.py",
+        "--project-id",
+        "test-project",
+        "--location",
+        "us",
+        "--app-id",
+        "test-app",
+        "--limit",
+        "10",
+        "--loss-limit",
+        "5",
+        "--start-time",
+        "2026-05-20T00:00:00Z",
+        "--end-time",
+        "2026-05-26T23:59:59Z",
+        "--output-file",
+        str(output_file),
+    ]
+
+    # We expect sys.exit(0) because list_conversations returns empty list
+    with pytest.raises(SystemExit) as e:
+        fetch_losses.main()
+    assert e.value.code == 0
+
+    # Verify list_conversations was called with correct filter (including default loss filter) and FULL view
+    mock_insights.list_conversations.assert_called_once_with(
+        filter_str='agent_id="test-app" AND -labels.sessionContained:"true" AND create_time >= "2026-05-20T00:00:00Z" AND create_time <= "2026-05-26T23:59:59Z"',
+        view="FULL",
+        page_size=100,
+        max_pages=1,
+    )
+
+
+@patch("fetch_losses.Insights")
+@patch("sys.argv")
+def test_main_with_custom_filter(mock_argv, mock_insights_class, tmp_path):
+    mock_insights = MagicMock()
+    mock_insights_class.return_value = mock_insights
+
+    mock_insights.list_conversations.return_value = []
+
+    output_file = tmp_path / "raw_losses.json"
+
+    # Set CLI args with custom filter
+    sys.argv = [
+        "fetch_losses.py",
+        "--project-id",
+        "test-project",
+        "--location",
+        "us",
+        "--app-id",
+        "test-app",
+        "--limit",
+        "10",
+        "--loss-limit",
+        "5",
+        "--filter",
+        'labels.sessionContained="true" AND labels.someKey="someValue"',
+        "--output-file",
+        str(output_file),
+    ]
+
+    with pytest.raises(SystemExit) as e:
+        fetch_losses.main()
+    assert e.value.code == 0
+
+    # Verify list_conversations was called with custom filter instead of default loss filter and FULL view
+    mock_insights.list_conversations.assert_called_once_with(
+        filter_str='agent_id="test-app" AND labels.sessionContained="true" AND labels.someKey="someValue"',
+        view="FULL",
+        page_size=100,
+        max_pages=1,
+    )
