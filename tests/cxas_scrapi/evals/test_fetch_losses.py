@@ -71,7 +71,7 @@ def test_extract_transcript():
                     "text": "billing issue",
                 }
             ]
-        }
+        },
     }
     result = fetch_losses.extract_transcript(conv)
 

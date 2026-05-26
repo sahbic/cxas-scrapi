@@ -117,8 +117,7 @@ def main():
     parser.add_argument(
         "--filter",
         help=(
-            "Custom API filter string to append "
-            "(overrides default loss filter)"
+            "Custom API filter string to append (overrides default loss filter)"
         ),
     )
     parser.add_argument(
@@ -153,8 +152,7 @@ def main():
     filter_arg = " AND ".join(filter_parts)
 
     logger.info(
-        "Fetching recent conversations with filter: %s "
-        "(target limit: %d)...",
+        "Fetching recent conversations with filter: %s (target limit: %d)...",
         filter_arg,
         args.limit,
     )
