@@ -1863,7 +1863,7 @@ def get_parser() -> argparse.ArgumentParser:
 
     # Subparsers for 'versions'
     parser_versions = subparsers.add_parser(
-        "versions", help="Manage GECX app versions (list, compare)."
+        "versions", help="Manage CXAS app versions (list, compare)."
     )
     versions_subparsers = parser_versions.add_subparsers(
         title="Versions Commands", dest="versions_command", required=True
@@ -1875,7 +1875,7 @@ def get_parser() -> argparse.ArgumentParser:
     parser_versions_list.add_argument(
         "--app-name",
         required=True,
-        help="The GECX App ID (projects/.../locations/.../apps/...).",
+        help="The CXAS App ID (projects/.../locations/.../apps/...).",
     )
     _add_project_location_args(parser_versions_list, required=False)
     parser_versions_list.set_defaults(func=app_versions_list)
@@ -1887,7 +1887,7 @@ def get_parser() -> argparse.ArgumentParser:
     parser_versions_compare.add_argument(
         "--app-name",
         required=True,
-        help="The GECX App ID (projects/.../locations/.../apps/...).",
+        help="The CXAS App ID (projects/.../locations/.../apps/...).",
     )
     parser_versions_compare.add_argument(
         "--source",
