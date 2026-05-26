@@ -40,10 +40,6 @@ from cxas_scrapi.cli.app import (
     apps_get,
     apps_list,
 )
-from cxas_scrapi.cli.versions_cli import (
-    app_versions_compare,
-    app_versions_list,
-)
 from cxas_scrapi.cli.create_local import handle_local_create
 from cxas_scrapi.cli.insights_cli import populate_insights_parser
 from cxas_scrapi.cli.migration_cli import (
@@ -56,6 +52,10 @@ from cxas_scrapi.cli.resources_cli import (
     register as register_resources_subparsers,
 )
 from cxas_scrapi.cli.trace_cli import register as register_trace_subparser
+from cxas_scrapi.cli.versions_cli import (
+    app_versions_compare,
+    app_versions_list,
+)
 from cxas_scrapi.core.apps import Apps
 from cxas_scrapi.core.common import Common
 from cxas_scrapi.core.conversation_history import ConversationHistory
@@ -1881,7 +1881,8 @@ def get_parser() -> argparse.ArgumentParser:
     parser_versions_list.set_defaults(func=app_versions_list)
 
     parser_versions_compare = versions_subparsers.add_parser(
-        "compare", help="Compare two app versions and generate a human-readable diff."
+        "compare",
+        help="Compare two app versions and generate a human-readable diff.",
     )
     parser_versions_compare.add_argument(
         "--app-name",
@@ -1906,12 +1907,18 @@ def get_parser() -> argparse.ArgumentParser:
         "--verbose",
         "-v",
         action="store_true",
-        help="Print detailed line-by-line diff directly to the console using rich formatting.",
+        help=(
+            "Print detailed line-by-line diff directly to the console using "
+            "rich formatting."
+        ),
     )
     parser_versions_compare.add_argument(
         "--web",
         action="store_true",
-        help="Force generate a self-contained interactive HTML diff report instead of console text.",
+        help=(
+            "Force generate a self-contained interactive HTML diff report "
+            "instead of console text."
+        ),
     )
     _add_project_location_args(parser_versions_compare, required=False)
     parser_versions_compare.set_defaults(func=app_versions_compare)

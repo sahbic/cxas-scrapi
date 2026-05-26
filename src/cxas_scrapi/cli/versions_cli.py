@@ -25,19 +25,20 @@ import tempfile
 import time
 from typing import Any
 
-from cxas_scrapi.cli.app import _resolve_app_args
-from cxas_scrapi.core.versions import Versions
 from jinja2 import Template
-import pandas as pd
 from rich.console import Console
 from rich.table import Table
+
+from cxas_scrapi.cli.app import _resolve_app_args
+from cxas_scrapi.core.versions import Versions
 
 logger = logging.getLogger(__name__)
 
 
 # --- Templates for output message and html report ---
 CONSOLE_SUMMARY_TEMPLATE = """
-[bold blue]Comparing versions for App:[/] [bold magenta]{{ display_name }}[/] [dim]({{ app_name }})[/]
+[bold blue]Comparing versions for App:[/]
+  [bold magenta]{{ display_name }}[/] [dim]({{ app_name }})[/]
   [dim]Source:[/] {{ source }} [bold cyan]({{ source_display_name }})[/]
   [dim]Target:[/] {{ target }} [bold cyan]({{ target_display_name }})[/]
 
@@ -90,11 +91,11 @@ CONSOLE_SUMMARY_TEMPLATE = """
 """
 
 HTML_DIFF_BLOCK_TEMPLATE = """
-<details style="margin: 12px 0; border: 1px solid #ddd; border-radius: 6px; background: #fff; overflow: hidden;" open>
-    <summary style="cursor: pointer; font-weight: bold; padding: 12px 16px; background: #f6f8fa; border-bottom: 1px solid #ddd; outline: none; user-select: none;">
-        📂 {{ title }} <span style="color: #666; font-weight: normal; font-size: 0.85em; margin-left: 8px;">({{ path }})</span>
+<details class="diff-block" open>
+    <summary class="diff-summary">
+        📂 {{ title }} <span class="diff-path">({{ path }})</span>
     </summary>
-    <pre style="margin: 0; padding: 16px; font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; line-height: 1.6; background: #fafafa; white-space: pre-wrap; word-wrap: break-word; word-break: break-all;">{{ content | safe }}</pre>
+    <pre class="diff-content">{{ content | safe }}</pre>
 </details>
 """
 
@@ -105,7 +106,8 @@ HTML_REPORT_TEMPLATE = """<!DOCTYPE html>
 <title>App Version Diff</title>
 <style>
   body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont,
+      'Segoe UI', Roboto, sans-serif;
     max-width: 1100px;
     margin: 0 auto;
     padding: 40px 20px;
@@ -139,6 +141,59 @@ HTML_REPORT_TEMPLATE = """<!DOCTYPE html>
     border-radius: 4px;
     font-size: 0.9em;
   }
+  .diff-block {
+    margin: 12px 0;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    background: #fff;
+    overflow: hidden;
+  }
+  .diff-summary {
+    cursor: pointer;
+    font-weight: bold;
+    padding: 12px 16px;
+    background: #f6f8fa;
+    border-bottom: 1px solid #ddd;
+    outline: none;
+    user-select: none;
+  }
+  .diff-path {
+    color: #666;
+    font-weight: normal;
+    font-size: 0.85em;
+    margin-left: 8px;
+  }
+  .diff-content {
+    margin: 0;
+    padding: 16px;
+    font-family: 'SFMono-Regular', Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.6;
+    background: #fafafa;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    word-break: break-all;
+  }
+  .line-addition {
+    color: #155724;
+    background: #d4edda;
+    display: block;
+  }
+  .line-deletion {
+    color: #721c24;
+    background: #f8d7da;
+    display: block;
+  }
+  .line-header {
+    color: #0366d6;
+    background: #e1f5fe;
+    display: block;
+    font-weight: bold;
+  }
+  .line-context {
+    color: #444;
+    display: block;
+  }
 </style>
 </head>
 <body>
@@ -146,21 +201,39 @@ HTML_REPORT_TEMPLATE = """<!DOCTYPE html>
 <div class="card">
   <div class="header-meta">
     <h1>🔄 App Version Diff</h1>
-    <span style="font-size:0.9em;color:#64748b;">Generated: {{ timestamp }}</span>
+    <span style="font-size:0.9em;color:#64748b;">
+      Generated: {{ timestamp }}
+    </span>
   </div>
 
   <table style="width: 100%; border-collapse: collapse; margin-bottom: 16px;">
     <tr>
-      <td style="padding: 8px 0; color:#64748b; width:120px;"><b>App Name:</b></td>
+      <td style="padding: 8px 0; color:#64748b; width:120px;">
+        <b>App Name:</b>
+      </td>
       <td style="padding: 8px 0;"><b>{{ display_name }}</b></td>
     </tr>
     <tr>
-      <td style="padding: 8px 0; color:#64748b;"><b>Source Version (a):</b></td>
-      <td style="padding: 8px 0;"><span class="version-badge">{{ source }}</span> <span style="color:#64748b;margin-left:8px;">({{ source_display }})</span></td>
+      <td style="padding: 8px 0; color:#64748b;">
+        <b>Source Version (a):</b>
+      </td>
+      <td style="padding: 8px 0;">
+        <span class="version-badge">{{ source }}</span>
+        <span style="color:#64748b;margin-left:8px;">
+          ({{ source_display }})
+        </span>
+      </td>
     </tr>
     <tr>
-      <td style="padding: 8px 0; color:#64748b;"><b>Target Version (b):</b></td>
-      <td style="padding: 8px 0;"><span class="version-badge">{{ target }}</span> <span style="color:#64748b;margin-left:8px;">({{ target_display }})</span></td>
+      <td style="padding: 8px 0; color:#64748b;">
+        <b>Target Version (b):</b>
+      </td>
+      <td style="padding: 8px 0;">
+        <span class="version-badge">{{ target }}</span>
+        <span style="color:#64748b;margin-left:8px;">
+          ({{ target_display }})
+        </span>
+      </td>
     </tr>
   </table>
 </div>
@@ -274,6 +347,7 @@ def app_versions_list(args: argparse.Namespace) -> None:
   except Exception as e:
     console.print(f"[red]Failed to list app versions: {e}[/]")
     sys.exit(1)
+
 def _print_console_summary(
     console: Console,
     display_name: str,
@@ -333,8 +407,6 @@ def _print_console_summary(
       modified_toolsets=mod_ts,
   )
   console.print(summary_rendered)
-
-
 
 
 def _print_verbose_diff(
@@ -407,24 +479,13 @@ def _generate_html_report(
           line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
       )
       if line.startswith("+") and not line.startswith("+++"):
-        lines_html.append(
-            '<span style="color:#155724;background:#d4edda;'
-            f'display:block;">{escaped}</span>'
-        )
+        lines_html.append(f'<span class="line-addition">{escaped}</span>')
       elif line.startswith("-") and not line.startswith("---"):
-        lines_html.append(
-            '<span style="color:#721c24;background:#f8d7da;'
-            f'display:block;">{escaped}</span>'
-        )
+        lines_html.append(f'<span class="line-deletion">{escaped}</span>')
       elif line.startswith("@@"):
-        lines_html.append(
-            '<span style="color:#0366d6;background:#e1f5fe;'
-            f'display:block;font-weight:bold;">{escaped}</span>'
-        )
+        lines_html.append(f'<span class="line-header">{escaped}</span>')
       else:
-        lines_html.append(
-            f'<span style="color:#444;display:block;">{escaped}</span>'
-        )
+        lines_html.append(f'<span class="line-context">{escaped}</span>')
 
     content_html = "".join(lines_html)
     block_html = Template(HTML_DIFF_BLOCK_TEMPLATE).render(
@@ -437,7 +498,11 @@ def _generate_html_report(
   # Wrap in Webpage Template
   diff_blocks_joined = "".join(html_diff_blocks)
   if not diff_blocks_joined:
-    diff_blocks_joined = '<div class="card" style="text-align:center;color:#27ae60;font-weight:bold;">✅ No differences found between versions.</div>'
+    diff_blocks_joined = (
+        '<div class="card" style="text-align:center;'
+        'color:#27ae60;font-weight:bold;">'
+        '✅ No differences found between versions.</div>'
+    )
 
   webpage = Template(HTML_REPORT_TEMPLATE).render(
       timestamp=time.strftime("%Y-%m-%d %H:%M"),
@@ -448,6 +513,7 @@ def _generate_html_report(
       target_display=v2.display_name,
       diff_blocks=diff_blocks_joined,
   )
+
 
   gosso_path = "/google/bin/releases/gosso/gosso"
   use_codebin = os.path.exists(gosso_path)
@@ -466,7 +532,8 @@ def _generate_html_report(
   # Set report URL and resolve disk writes only if required
   if codebin_url:
     report_url = codebin_url
-    # If the user explicitly requested a local output HTML file, we save it permanently
+    # If the user explicitly requested a local output HTML file,
+    # we save it permanently.
     if args.output and args.output.endswith(".html"):
       try:
         report_path = _resolve_report_path(args)
