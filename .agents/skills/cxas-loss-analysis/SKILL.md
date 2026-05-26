@@ -26,8 +26,7 @@ And the following optional parameters if they wish to scope the analysis:
 - `start_time`: RFC 3339 timestamp for start of time period (e.g., `2026-05-20T00:00:00Z`).
 - `end_time`: RFC 3339 timestamp for end of time period (e.g., `2026-05-26T23:59:59Z`).
 - `filter`: Custom API filter string to apply (overrides the default loss filter `-labels.sessionContained="true"`).
-- `limit`: Maximum conversations to retrieve (default: 2000).
-- `loss_limit`: Maximum loss transcripts to fetch and analyze (default: 500).
+- `limit`: Maximum conversations to retrieve and process (default: 500).
 
 ### Step 2: Extract Loss Transcripts
 Run the lightweight data-extraction script to dump the loss transcripts into chunked JSON files in your workspace.
@@ -39,7 +38,6 @@ python3 -P .agents/skills/cxas-loss-analysis/scripts/fetch_losses.py \
   --location "{location}" \
   --app-id "{app_id}" \
   --limit {limit} \
-  --loss-limit {loss_limit} \
   --output-file "{output_dir}/raw_losses.json" \
   [--start-time "{start_time}"] \
   [--end-time "{end_time}"] \
@@ -90,7 +88,7 @@ Compile your analysis into a structured Markdown report and write it to `{output
 
 ## Executive Summary
 
-A random sample of up to {loss_limit} conversations matching the filter was selected for detailed manual analysis and clustering to identify key patterns.
+A sample of up to {limit} conversations matching the filter was selected for detailed manual analysis and clustering to identify key patterns.
 
 ## Loss Patterns Distribution
 

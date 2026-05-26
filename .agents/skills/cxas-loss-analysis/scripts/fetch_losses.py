@@ -16,7 +16,6 @@ import argparse
 import json
 import logging
 import os
-import random
 import sys
 from typing import Any, Dict, Optional
 
@@ -91,14 +90,8 @@ def main():
     parser.add_argument(
         "--limit",
         type=int,
-        default=2000,
-        help="Max conversations to retrieve (default: 2000)",
-    )
-    parser.add_argument(
-        "--loss-limit",
-        type=int,
         default=500,
-        help="Max loss transcripts to extract (default: 500)",
+        help="Max conversations to retrieve and process (default: 500)",
     )
     parser.add_argument(
         "--start-time",
@@ -179,24 +172,9 @@ def main():
         logger.warning("No conversations found matching the filter.")
         sys.exit(0)
 
-    # Randomly sample losses
-    if len(losses) > args.loss_limit:
-        target_losses = random.sample(losses, args.loss_limit)
-        logger.info(
-            "Randomly sampled %d losses from %d total losses for extraction...",
-            len(target_losses),
-            len(losses),
-        )
-    else:
-        target_losses = losses
-        logger.info(
-            "Selecting all %d available losses for extraction...",
-            len(target_losses),
-        )
-
     # Process transcripts
     extracted_data = []
-    for conv in target_losses:
+    for conv in losses:
         res = extract_transcript(conv)
         if res:
             extracted_data.append(res)
