@@ -58,7 +58,7 @@ EVALS_YAML = get_project_path("evals", "scenarios", "scenarios.yaml")
 SIM_EVALS_YAML = get_project_path("evals", "simulations", "simulations.yaml")
 REPORTS_DIR = get_project_path("eval-reports")
 
-_DEFAULT_MODEL = "gemini-3.1-flash-lite-preview"
+_DEFAULT_MODEL = "gemini-3.1-flash-lite"
 
 
 def load_yaml():
