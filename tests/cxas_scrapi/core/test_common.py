@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import os
+import subprocess
 import sys
 from unittest.mock import MagicMock, patch
 
@@ -125,26 +126,30 @@ def test_parse_textproto():
 
 
 def test_ces_api_endpoint_override():
-    import subprocess
-    import sys
-    
     # Run a subprocess with CES_API_ENDPOINT set
     cmd = [
         sys.executable,
         "-c",
-        "from cxas_scrapi.core.common import DEFAULT_API_ENDPOINT; print(DEFAULT_API_ENDPOINT)"
+        (
+            "from cxas_scrapi.core.common import DEFAULT_API_ENDPOINT; "
+            "print(DEFAULT_API_ENDPOINT)"
+        ),
     ]
     env = os.environ.copy()
     env["CES_API_ENDPOINT"] = "custom.ces.googleapis.com"
-    
+
     # We need to make sure src is in python path for the subprocess
-    src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../src"))
+    src_path = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "../../../src")
+    )
     if "PYTHONPATH" in env:
         env["PYTHONPATH"] = f"{src_path}:{env['PYTHONPATH']}"
     else:
         env["PYTHONPATH"] = src_path
-        
-    result = subprocess.run(cmd, env=env, capture_output=True, text=True, check=True)
+
+    result = subprocess.run(
+        cmd, env=env, capture_output=True, text=True, check=True
+    )
     assert result.stdout.strip() == "custom.ces.googleapis.com"
 
 
