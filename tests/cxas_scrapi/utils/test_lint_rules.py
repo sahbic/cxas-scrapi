@@ -193,9 +193,7 @@ def test_i014_in_global_only(tmp_path, context):
     from cxas_scrapi.utils.lint_rules.instructions import MissingCurrentDate  # noqa: PLC0415,I001
 
     rule = MissingCurrentDate()
-    (tmp_path / "global_instruction.txt").write_text(
-        "Today is {current_date}."
-    )
+    (tmp_path / "global_instruction.txt").write_text("Today is {current_date}.")
     f = tmp_path / "instruction.txt"
     f.write_text("No date here.")
 
@@ -208,9 +206,7 @@ def test_i014_in_global_and_agent(tmp_path, context):
     from cxas_scrapi.utils.lint_rules.instructions import MissingCurrentDate  # noqa: PLC0415,I001
 
     rule = MissingCurrentDate()
-    (tmp_path / "global_instruction.txt").write_text(
-        "Today is {current_date}."
-    )
+    (tmp_path / "global_instruction.txt").write_text("Today is {current_date}.")
     f = tmp_path / "instruction.txt"
     f.write_text("Date: {current_date}.")
 
