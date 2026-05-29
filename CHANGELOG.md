@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.1](https://github.com/GoogleCloudPlatform/cxas-scrapi/compare/v1.4.0...v1.4.1) (2026-05-29)
+
+
+### Bug Fixes
+
+* fix .gitignore to prevent packaging issues ([952070e](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/952070efb41613959807b3a513150ac4dfb35b40))
+
 ## [1.4.0](https://github.com/GoogleCloudPlatform/cxas-scrapi/compare/v1.3.0...v1.4.0) (2026-05-29)
 
 
