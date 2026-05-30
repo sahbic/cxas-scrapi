@@ -189,7 +189,9 @@ def _build_user_prompt(
     numbered_lines: list[tuple[int, str]],
 ) -> str:
     allowed_csv = ", ".join(ALLOWED_BRANDS)
-    body = "\n".join(f"{lineno}: {content}" for lineno, content in numbered_lines)
+    body = "\n".join(
+        f"{lineno}: {content}" for lineno, content in numbered_lines
+    )
     return f"""Scan the following {scoped_label} for third-party brand /
 company / product names.
 
