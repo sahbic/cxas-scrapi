@@ -268,9 +268,7 @@ def _call_gemini(prompt: str) -> dict:
     try:
         return json.loads(text)
     except json.JSONDecodeError as exc:
-        raise RuntimeError(
-            f"Gemini returned non-JSON: {text[:200]!r}"
-        ) from exc
+        raise RuntimeError(f"Gemini returned non-JSON: {text[:200]!r}") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -285,9 +283,7 @@ def _format_findings(findings: list[dict], source_label: str) -> list[str]:
         brand = f.get("brand", "?")
         snippet = f.get("snippet", "").strip()
         snippet_str = f" — {snippet}" if snippet else ""
-        out.append(
-            f"  {source_label} line {line_no}: '{brand}'{snippet_str}"
-        )
+        out.append(f"  {source_label} line {line_no}: '{brand}'{snippet_str}")
     return out
 
 
