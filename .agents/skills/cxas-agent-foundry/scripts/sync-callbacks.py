@@ -63,15 +63,15 @@ def derive_callback_name(field_name):
     return field_name
 
 
-def sync_agent_callbacks(app_name, agent_resource_name, agent_folder_name, dry_run=False):
+def sync_agent_callbacks(app_name, agent_name, dry_run=False):
     """Sync callbacks for a single agent. Returns (synced, tests_found, tests_missing)."""
     from cxas_scrapi.core.callbacks import Callbacks
 
     callbacks_client = Callbacks(app_name=app_name, user_agent_extension=USER_AGENT_EXTENSION)
     try:
-        cb_map = callbacks_client.list_callbacks(agent_resource_name)
+        cb_map = callbacks_client.list_callbacks(agent_name)
     except Exception as e:
-        print(f"  Error: Failed to list callbacks for '{agent_folder_name}': {e}")
+        print(f"  Error: Failed to list callbacks for '{agent_name}': {e}")
         return 0, 0, 0
 
     synced = 0
@@ -79,7 +79,7 @@ def sync_agent_callbacks(app_name, agent_resource_name, agent_folder_name, dry_r
     tests_missing = 0
 
     if not cb_map:
-        print(f"  No callbacks found for agent '{agent_folder_name}'")
+        print(f"  No callbacks found for agent '{agent_name}'")
         return synced, tests_found, tests_missing
 
     for field_name, cb_list in cb_map.items():
@@ -102,9 +102,9 @@ def sync_agent_callbacks(app_name, agent_resource_name, agent_folder_name, dry_r
                 callback_name = base_name
 
             # Build paths
-            agent_cb_dir = os.path.join(AGENTS_DIR, agent_folder_name, callback_type, callback_name)
+            agent_cb_dir = os.path.join(AGENTS_DIR, agent_name, callback_type, callback_name)
             code_path = os.path.join(agent_cb_dir, "python_code.py")
-            test_src = os.path.join(TESTS_DIR, agent_folder_name, callback_type, callback_name, "test.py")
+            test_src = os.path.join(TESTS_DIR, agent_name, callback_type, callback_name, "test.py")
             symlink_path = os.path.join(agent_cb_dir, "test.py")
 
             disabled = getattr(cb, "disabled", False)
@@ -298,21 +298,12 @@ def main():
 
     # Filter to a single agent if requested
     if args.agent:
-        filtered = []
-        for a in agent_list:
-            disp = getattr(a, "display_name", None) or ""
-            norm = disp.replace(" ", "_")
-            raw_id = getattr(a, "name", "").split("/")[-1]
-            if args.agent in (disp, norm, raw_id):
-                filtered.append(a)
-        agent_list = filtered
+        agent_list = [a for a in agent_list if getattr(a, "display_name", None) == args.agent]
         if not agent_list:
             print(f"Agent '{args.agent}' not found. Available agents:")
             all_agents = agents_client.list_agents()
             for a in all_agents:
-                disp = getattr(a, 'display_name', '?')
-                norm = disp.replace(" ", "_")
-                print(f"  - {disp} ({norm})")
+                print(f"  - {getattr(a, 'display_name', '?')}")
             return
 
     total_synced = 0
@@ -320,14 +311,10 @@ def main():
     total_tests_missing = 0
 
     for agent in agent_list:
-        display_name = getattr(agent, "display_name", None) or "unknown"
-        agent_name = display_name or getattr(agent, "name", "unknown")
+        agent_name = getattr(agent, "display_name", None) or getattr(agent, "name", "unknown")
         print(f"\n--- {agent_name} ---")
 
-        # Normalize folder name (replace spaces with underscores)
-        folder_name = agent_name.replace(" ", "_")
-
-        s, tf, tm = sync_agent_callbacks(app_name, agent.name, folder_name, dry_run=args.dry_run)
+        s, tf, tm = sync_agent_callbacks(app_name, agent_name, dry_run=args.dry_run)
         total_synced += s
         total_tests_found += tf
         total_tests_missing += tm
