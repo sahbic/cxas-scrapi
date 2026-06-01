@@ -143,7 +143,7 @@ def _app_pull(
                 for member in export_members:
                     parts = member.split("/")
                     if len(parts) > 1 and parts[0] == top_dir:
-                         export_root_items.add(parts[1])
+                        export_root_items.add(parts[1])
 
                 # Walk the local app root bottom-up to remove files then dirs
                 for root, dirs, files in os.walk(app_root, topdown=False):
