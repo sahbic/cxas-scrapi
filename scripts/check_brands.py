@@ -41,7 +41,9 @@ Requirements
 - ``gcloud auth application-default login`` (or a service-account
   ``GOOGLE_APPLICATION_CREDENTIALS`` pointer)
 - ``GOOGLE_CLOUD_PROJECT`` env var, OR ``gcloud config set project ...``
-- ``google-genai`` (already in this repo's runtime deps)
+- ``pip install -e .[dev]`` so :class:`cxas_scrapi.utils.gemini.GeminiGenerate`
+  is importable (the same wrapper every other Gemini caller in this
+  repo uses — see ``MigrationService``, ``CXASOptimizer``, etc.)
 """
 
 from __future__ import annotations
@@ -229,8 +231,17 @@ If no third-party brand mentions are present, return
 
 def _call_gemini(prompt: str) -> dict:
     """Send the prompt to Gemini in JSON-mode and return the parsed
-    response. Raises :class:`RuntimeError` on any failure (no auth,
-    no project, network down, bad JSON)."""
+    response. Routes through :class:`GeminiGenerate` (the same wrapper
+    every other Gemini caller in this repo uses) so credential
+    handling, thread-local client construction, and concurrency
+    semantics stay consistent. We override the wrapper's defaults to
+    a cheap, deterministic configuration (``gemini-2.5-flash`` at
+    ``temperature=0.0``) suitable for a per-commit guard.
+
+    Raises :class:`RuntimeError` on any failure (no auth, no project,
+    network down, empty / non-JSON response). The wrapper swallows
+    exceptions and returns ``None``; we translate that back into an
+    explicit raise to honor the hook's block-on-failure contract."""
     project_id = _resolve_project_id()
     if not project_id:
         raise RuntimeError(
@@ -239,32 +250,34 @@ def _call_gemini(prompt: str) -> dict:
         )
 
     try:
-        from google import genai  # noqa: PLC0415
-        from google.genai import types  # noqa: PLC0415
+        from cxas_scrapi.utils.gemini import GeminiGenerate  # noqa: PLC0415
     except ImportError as exc:
         raise RuntimeError(
-            "google-genai not installed (pip install -e .[dev])."
+            "cxas_scrapi not importable — run `pip install -e .[dev]` "
+            "from the repo root."
         ) from exc
 
     try:
-        client = genai.Client(
-            vertexai=True, project=project_id, location="global"
+        client = GeminiGenerate(
+            project_id=project_id,
+            location="global",
+            model_name="gemini-2.5-flash",
         )
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=_GEMINI_SYSTEM,
-                response_mime_type="application/json",
-                temperature=0.0,
-            ),
+        text = client.generate(
+            prompt=prompt,
+            system_prompt=_GEMINI_SYSTEM,
+            response_mime_type="application/json",
+            temperature=0.0,
         )
     except Exception as exc:  # noqa: BLE001
         raise RuntimeError(f"Gemini call failed: {exc}") from exc
 
-    text = getattr(response, "text", None)
     if not text:
-        raise RuntimeError("Gemini returned an empty response.")
+        # GeminiGenerate returns None on any exception inside the call.
+        raise RuntimeError(
+            "Gemini returned no response (check auth, quota, and "
+            "network connectivity)."
+        )
     try:
         return json.loads(text)
     except json.JSONDecodeError as exc:
