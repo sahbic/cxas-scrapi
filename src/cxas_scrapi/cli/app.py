@@ -232,8 +232,15 @@ def _app_push(
         print("Uploading to CES...")
 
         if target_app_name:
+            conflict_strategy = (
+                "OVERWRITE"
+                if args and getattr(args, "overwrite", False)
+                else None
+            )
             result = apps_client.import_app(
-                app_name=target_app_name, app_content=app_content
+                app_name=target_app_name,
+                app_content=app_content,
+                conflict_strategy=conflict_strategy,
             )
         else:
             result = apps_client.import_as_new_app(

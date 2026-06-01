@@ -1811,6 +1811,15 @@ def get_parser() -> argparse.ArgumentParser:
         "--version-description",
         help="Description for the created version.",
     )
+    parser_push.add_argument(
+        "--overwrite",
+        action="store_true",
+        help=(
+            "Overwrite existing data with imported data. Existing resources "
+            "that do not have a matching display name in the imported app "
+            "will be deleted"
+        ),
+    )
     parser_push.set_defaults(func=app_push)
 
     # Parser for 'lint'
