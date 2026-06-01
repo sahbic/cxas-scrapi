@@ -1773,6 +1773,15 @@ def get_parser() -> argparse.ArgumentParser:
     parser_pull.add_argument(
         "--target-dir", default=".", help="Directory to extract to."
     )
+    parser_pull.add_argument(
+        "--overwrite",
+        action="store_true",
+        help=(
+            "Overwrite existing target directory data with exported data. "
+            "Existing resources that do not have a matching display name in "
+            "the exported app will be deleted."
+        ),
+    )
     _add_project_location_args(parser_pull, required=False)
     parser_pull.set_defaults(func=app_pull)
 
