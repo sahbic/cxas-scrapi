@@ -213,18 +213,12 @@ class LLMUserConversation(Conversation):
 
         return True
 
-    def _handle_first_turn(self) -> Optional[tuple[str, Dict[str, Any]]]:
-        """Handles the special logic for the first turn."""
-        if self.current_turn != 0:
-            return None
-
-        session_params = self.test_case.get("session_parameters", {})
-        if not self.test_case["steps"][0].get("static_utterance", None):
-            return _FIRST_UTTERANCE, session_params
-
-        inject_vars = self.test_case["steps"][0].get("inject_variables", {})
-        merged_vars = {**session_params, **inject_vars}
-        return self.test_case["steps"][0]["static_utterance"], merged_vars
+    def _get_active_step_index(self) -> Optional[int]:
+        """Finds the index of the first step that is not completed."""
+        for i, prog in enumerate(self.steps_progress):
+            if prog.status != StepStatus.COMPLETED:
+                return i
+        return None
 
     def _prepare_llm_prompt(self) -> str:
         """Prepares the prompt for the LLM user."""
@@ -265,9 +259,27 @@ class LLMUserConversation(Conversation):
         if not self._check_conversation_status():
             return "", {}
 
-        first_turn = self._handle_first_turn()
-        if first_turn:
-            return first_turn
+        active_idx = self._get_active_step_index()
+        if active_idx is not None:
+            active_step_prog = self.steps_progress[active_idx]
+            if active_step_prog.step.static_utterance:
+                # Mark static step as completed
+                active_step_prog.status = StepStatus.COMPLETED
+                active_step_prog.justification = (
+                    "Static utterance sent (bypassed LLM)."
+                )
+
+                utterance = active_step_prog.step.static_utterance
+                session_params = self.test_case.get("session_parameters", {})
+                inject_vars = self.test_case["steps"][active_idx].get(
+                    "inject_variables", {}
+                )
+                merged_vars = {**session_params, **inject_vars}
+                return utterance, merged_vars
+
+        if self.current_turn == 0:
+            session_params = self.test_case.get("session_parameters", {})
+            return _FIRST_UTTERANCE, session_params
 
         prompt = self._prepare_llm_prompt()
 

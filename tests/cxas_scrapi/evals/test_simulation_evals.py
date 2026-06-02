@@ -482,16 +482,62 @@ def test_llm_user_check_conversation_status_max_turns():
     assert conv._check_conversation_status() is False
 
 
-def test_llm_user_handle_first_turn():
+def test_llm_user_get_active_step_index():
     mock_genai_client = MagicMock()
     test_case = {
-        "steps": [{"goal": "greet", "static_utterance": "Hello"}],
+        "steps": [{"goal": "greet"}, {"goal": "ask_hours"}],
+    }
+    conv = LLMUserConversation(mock_genai_client, "model", test_case)
+    # Initially first step is active (index 0)
+    assert conv._get_active_step_index() == 0
+
+    # Mark first step as completed
+    conv.steps_progress[0].status = StepStatus.COMPLETED
+    assert conv._get_active_step_index() == 1
+
+    # Mark second step as completed
+    conv.steps_progress[1].status = StepStatus.COMPLETED
+    assert conv._get_active_step_index() is None
+
+
+def test_llm_user_next_user_utterance_static_utterance_bypass():
+    mock_genai_client = MagicMock()
+    test_case = {
+        "steps": [
+            {
+                "goal": "greet",
+                "static_utterance": "Hello First Step",
+                "inject_variables": {"var1": "val1"},
+            },
+            {"goal": "ask_hours", "static_utterance": "What are the hours?"},
+        ],
         "session_parameters": {"user_id": "123"},
     }
     conv = LLMUserConversation(mock_genai_client, "model", test_case)
-    utterance, params = conv._handle_first_turn()
-    assert utterance == "Hello"
-    assert params["user_id"] == "123"
+
+    # 1. First Turn (Turn 0): Should bypass LLM and return first step's
+    # static utterance
+    utterance, variables = conv.next_user_utterance()
+    assert utterance == "Hello First Step"
+    assert variables == {"user_id": "123", "var1": "val1"}
+    assert conv.steps_progress[0].status == StepStatus.COMPLETED
+    assert conv.steps_progress[0].justification == (
+        "Static utterance sent (bypassed LLM)."
+    )
+    mock_genai_client.generate.assert_not_called()
+
+    # 2. Second Turn (Turn 1): Active step is now index 1 which is also
+    # static. Should bypass LLM again.
+    utterance, variables = conv.next_user_utterance(
+        "Agent response to first step"
+    )
+    assert utterance == "What are the hours?"
+    assert variables == {"user_id": "123"}
+    assert conv.steps_progress[1].status == StepStatus.COMPLETED
+    assert conv.steps_progress[1].justification == (
+        "Static utterance sent (bypassed LLM)."
+    )
+    mock_genai_client.generate.assert_not_called()
 
 
 def test_simulation_evals_add_agent_text():
