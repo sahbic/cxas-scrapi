@@ -68,15 +68,17 @@ class Conversations(BaseModel):
 class EvalUtils(Evaluations):
     """Utility class for processing and exporting CXAS Evaluation Results."""
 
-    def __init__(self, app_name: str, env: str = "PROD"):
+    def __init__(self, app_name: str, env: str = "PROD", **kwargs):
         """Initializes the EvalUtils class for processing Evaluation Results.
 
         Args:
             app_name: CXAS App ID
                 (projects/{project}/locations/{location}/apps/{app}).
             env: Environment override (default: PROD).
+            **kwargs: Additional arguments passed to the parent class
+                (Evaluations).
         """
-        super().__init__(app_name=app_name, env=env)
+        super().__init__(app_name=app_name, env=env, **kwargs)
         self.app_name = app_name
         self.tools_client = Tools(app_name=self.app_name, creds=self.creds)
         self.var_client = Variables(app_name=self.app_name, creds=self.creds)
@@ -104,7 +106,9 @@ class EvalUtils(Evaluations):
         self.ch_client = ConversationHistory(
             app_name=self.app_name, creds=self.creds
         )
-        self.eval_client = Evaluations(app_name=self.app_name, env=env)
+        self.eval_client = Evaluations(
+            app_name=self.app_name, env=env, creds=self.creds
+        )
 
     @staticmethod
     def parse_variables_input(v: Any) -> Dict[str, Any]:
