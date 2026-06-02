@@ -1244,7 +1244,10 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser_report.add_argument(
         "--burst-noise-files",
-        help="Optional: Comma-separated list of paths to burst noise audio files.",
+        help=(
+            "Optional: Comma-separated list of paths to burst noise audio "
+            "files."
+        ),
     )
     parser_report.set_defaults(func=combined_evals_report_cmd)
 
@@ -1448,7 +1451,6 @@ def get_parser() -> argparse.ArgumentParser:
             "hallucination) and only evaluate custom expectations."
         ),
     )
-
 
     parser_run.set_defaults(func=run_eval)
 

@@ -92,8 +92,6 @@ class TestAudioTransformer:
         assert result["text"] == "hello"
         assert result["audio_bytes"] is None
 
-
-
     @patch("cxas_scrapi.core.audio_transformer.AudioSegment")
     @patch("cxas_scrapi.core.audio_transformer.texttospeech")
     def test_text_to_speech_bytes_with_burst_noise_success(
@@ -201,4 +199,3 @@ class TestAudioTransformer:
         # Verify graceful fallback to clean audio
         assert result["text"] == "hello"
         assert result["audio_bytes"] == b"clean_audio_"
-

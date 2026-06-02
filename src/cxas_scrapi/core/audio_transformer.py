@@ -79,7 +79,9 @@ class AudioTransformer:
 
             if burst_noise_files and AudioSegment is None:
                 logging.warning(
-                    "burst_noise_files were provided, but pydub is not installed or failed to import (e.g., under Python 3.13+). Audio burst noise injection will be skipped."
+                    "burst_noise_files were provided, but pydub is not "
+                    "installed or failed to import (e.g., under Python 3.13+). "
+                    "Audio burst noise injection will be skipped."
                 )
 
             # Apply burst noise if provided and pydub is available
@@ -93,11 +95,11 @@ class AudioTransformer:
                     # Apply burst noise
                     for burst_file in burst_noise_files:
                         burst_noise = AudioSegment.from_file(burst_file)
-                        # Calculate dynamic volume to match target burst_noise_snr
-                        if (
-                            burst_noise.dBFS != float("-inf")
-                            and speech_audio.dBFS != float("-inf")
-                        ):
+                        # Calculate dynamic volume to match target
+                        # burst_noise_snr
+                        if burst_noise.dBFS != float(
+                            "-inf"
+                        ) and speech_audio.dBFS != float("-inf"):
                             target_burst_dbfs = (
                                 speech_audio.dBFS - burst_noise_snr
                             )
@@ -110,7 +112,7 @@ class AudioTransformer:
                         if len(speech_audio) > len(burst_noise):
                             position = random.randint(
                                 0, len(speech_audio) - len(burst_noise)
-                              )
+                            )
                             speech_audio = speech_audio.overlay(
                                 burst_noise, position=position
                             )
