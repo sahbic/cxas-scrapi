@@ -38,6 +38,13 @@
         {% elif s_dur > 0 %}
           <br><span class='meta'>~{{ _fmt_duration(s_dur) }}</span>
         {% endif %}
+        {% if bg_noise_file or burst_noise_files %}
+          <div style="font-size:0.85em;color:#e67e22;margin-top:6px;">
+            <b>Noise Injection Active:</b>
+            {% if bg_noise_file %}<br>BG: {{ bg_noise_file }}{% endif %}
+            {% if burst_noise_files %}<br>Burst: {{ burst_noise_files | length }} file(s){% endif %}
+          </div>
+        {% endif %}
       </div>
     {% endif %}
 

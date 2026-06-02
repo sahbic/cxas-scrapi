@@ -40,7 +40,17 @@ try:
 except ImportError:
     HAS_IPYTHON = False
 
-from cxas_scrapi.core.audio_transformer import AudioTransformer
+from cxas_scrapi.core.audio_transformer import (
+    AUDIO_CHANNELS,
+    AUDIO_SAMPLE_RATE_HZ,
+    AUDIO_SAMPLE_WIDTH,
+    AudioTransformer,
+)
+
+try:
+    from pydub import AudioSegment
+except ImportError:
+    AudioSegment = None
 from cxas_scrapi.core.common import DEFAULT_API_ENDPOINT, Common
 from cxas_scrapi.core.conversation_history import ConversationHistory
 from cxas_scrapi.core.response_parser import ParsedSessionResponse
@@ -60,8 +70,8 @@ BIDI_SESSION_URI = (
 AUDIO_CHUNK_SIZE = 3200
 CHUNK_DELAY = 0.1
 SILENCE_PADDING_CHUNKS = 3
-SAMPLE_RATE = 16000
-SAMPLE_WIDTH = 2
+SAMPLE_RATE = AUDIO_SAMPLE_RATE_HZ
+SAMPLE_WIDTH = AUDIO_SAMPLE_WIDTH
 
 
 # Clean WebSocket close codes (RFC 6455)
@@ -171,6 +181,8 @@ class BidiSessionHandler:
         config: Dict[str, Any],
         inputs: List[Dict[str, Any]],
         user_agent: str = None,
+        background_noise_file: Optional[str] = None,
+        bg_noise_snr: float = 15.0,
     ):
         self.uri = BIDI_SESSION_URI + location
         self.token = token
@@ -184,11 +196,72 @@ class BidiSessionHandler:
         self._close_msg: Optional[str] = None
         self._connection_error: Optional[BaseException] = None
 
+        # Setup continuous background noise segment if provided
+        self.bg_noise_segment = None
+        self.bg_noise_cursor = 0
+        if background_noise_file and AudioSegment is None:
+            raise ImportError(
+                "background_noise_file was provided, but pydub is not "
+                "installed or failed to import. Please install pydub "
+                "(and audioop-lts on Python 3.13+) to enable background noise."
+            )
+        if AudioSegment and background_noise_file:
+            try:
+                # Load and format to 16000Hz, 1ch, 16-bit (sample width 2) PCM
+                segment = AudioSegment.from_file(background_noise_file)
+                segment = (
+                    segment.set_frame_rate(SAMPLE_RATE)
+                    .set_channels(AUDIO_CHANNELS)
+                    .set_sample_width(SAMPLE_WIDTH)
+                )
+
+                # Pre-scale the noise to match the target SNR relative to a
+                # standard -20.0 dBFS speech level
+                if segment.dBFS != float("-inf"):
+                    target_noise_dbfs = -20.0 - bg_noise_snr
+                    volume_change = target_noise_dbfs - segment.dBFS
+                    self.bg_noise_segment = segment + volume_change
+                    logging.debug(
+                        "Pre-scaled continuous background noise: "
+                        "target = %.2f dBFS, delta = %.2f dB",
+                        target_noise_dbfs,
+                        volume_change,
+                    )
+                else:
+                    self.bg_noise_segment = segment - 15.0
+
+            except Exception as ex:
+                logging.warning(
+                    f"Failed to load continuous background noise file: {ex}"
+                )
+
+    def _get_next_noise_chunk(self, duration_ms: int) -> bytes:
+        """Extracts the next chunk of continuous background noise PCM bytes."""
+        chunk_bytes_len = int(SAMPLE_RATE * SAMPLE_WIDTH * (duration_ms / 1000))
+
+        if self.bg_noise_segment is None:
+            return b"\x00" * chunk_bytes_len
+
+        chunk_segment = self.bg_noise_segment[
+            self.bg_noise_cursor : self.bg_noise_cursor + duration_ms
+        ]
+        self.bg_noise_cursor += duration_ms
+
+        if self.bg_noise_cursor >= len(self.bg_noise_segment):
+            self.bg_noise_cursor = 0
+
+        if len(chunk_segment) < duration_ms:
+            padding_len = duration_ms - len(chunk_segment)
+            chunk_segment = chunk_segment + self.bg_noise_segment[:padding_len]
+
+        return chunk_segment.raw_data[:chunk_bytes_len]
+
     def _send_silence(self, num_chunks: int):
-        silence_chunk = b"\x00" * AUDIO_CHUNK_SIZE
+        chunk_duration_ms = 100
         for _ in range(num_chunks):
+            noise_chunk = self._get_next_noise_chunk(chunk_duration_ms)
             query_message = types.BidiSessionClientMessage(
-                realtime_input=types.SessionInput(audio=silence_chunk)
+                realtime_input=types.SessionInput(audio=noise_chunk)
             )
             query_json = json_format.MessageToJson(
                 query_message._pb,
@@ -228,6 +301,31 @@ class BidiSessionHandler:
 
         for i in range(0, len(audio_bytes), AUDIO_CHUNK_SIZE):
             chunk = audio_bytes[i : i + AUDIO_CHUNK_SIZE]
+
+            # Dynamically mix continuous background noise chunk-by-chunk
+            # in real-time
+            if self.bg_noise_segment is not None:
+                try:
+                    speech_seg = AudioSegment(
+                        chunk,
+                        frame_rate=SAMPLE_RATE,
+                        sample_width=SAMPLE_WIDTH,
+                        channels=AUDIO_CHANNELS,
+                    )
+                    noise_seg = self.bg_noise_segment[
+                        self.bg_noise_cursor : self.bg_noise_cursor + 100
+                    ]
+                    self.bg_noise_cursor += 100
+                    if self.bg_noise_cursor >= len(self.bg_noise_segment):
+                        self.bg_noise_cursor = 0
+
+                    mixed_seg = speech_seg.overlay(noise_seg)
+                    chunk = mixed_seg.raw_data[: len(chunk)]
+                except Exception as ex:
+                    logging.warning(
+                        "Failed to overlay continuous noise chunk in "
+                        f"real-time: {ex}"
+                    )
 
             query_message = types.BidiSessionClientMessage(
                 realtime_input=types.SessionInput(audio=chunk)
@@ -778,7 +876,11 @@ class Sessions(Common):
         }
 
     def async_bidi_run_session(
-        self, config: dict, inputs: list[dict[str, Any]]
+        self,
+        config: dict,
+        inputs: list[dict[str, Any]],
+        background_noise_file: Optional[str] = None,
+        bg_noise_snr: float = 15.0,
     ):
         if self.rate_limiter:
             self.rate_limiter.wait_and_consume()
@@ -796,6 +898,8 @@ class Sessions(Common):
             config,
             inputs,
             user_agent=self.user_agent,
+            background_noise_file=background_noise_file,
+            bg_noise_snr=bg_noise_snr,
         )
         return handler.run()
 
@@ -825,6 +929,8 @@ class Sessions(Common):
         turn_count: Optional[int] = None,
         modality: Modality | str = Modality.TEXT,
         use_tool_fakes: bool = False,
+        background_noise_file: Optional[str] = None,
+        burst_noise_files: Optional[List[str]] = None,
     ):
         """Sends inputs to a Conversational Agents Session and returns the
         response.
@@ -1005,6 +1111,8 @@ class Sessions(Common):
                             text=input,
                             credentials=self.creds,
                             project_id=self.project_id,
+                            background_noise_file=background_noise_file,
+                            burst_noise_files=burst_noise_files,
                         )
                     )
                 for input_data in input_audio_bytes:
@@ -1016,9 +1124,17 @@ class Sessions(Common):
                     if variables:
                         audio_payload["variables"] = variables
                     inputs.append({"audio": audio_payload})
-                return self.async_bidi_run_session(config=config, inputs=inputs)
+                return self.async_bidi_run_session(
+                    config=config,
+                    inputs=inputs,
+                    background_noise_file=background_noise_file,
+                )
             elif inputs:
-                return self.async_bidi_run_session(config=config, inputs=inputs)
+                return self.async_bidi_run_session(
+                    config=config,
+                    inputs=inputs,
+                    background_noise_file=background_noise_file,
+                )
             else:
                 raise ValueError(
                     "Input payloads (text, audio, event, etc.) must be "

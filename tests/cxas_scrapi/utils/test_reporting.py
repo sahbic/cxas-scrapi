@@ -725,6 +725,8 @@ def test_run_all_evals_dict_based_simulations(
         runs=1,
         parallel=1,
         modality="text",
+        background_noise_file=None,
+        burst_noise_files=None,
     )
 
 

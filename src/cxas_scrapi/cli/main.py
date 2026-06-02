@@ -584,6 +584,10 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
         filter_tags=filter_tags_list,
         parallel=sim_parallel,
         golden_timeout=golden_timeout,
+        bg_noise_file=getattr(args, "bg_noise_file", None),
+        burst_noise_files=getattr(args, "burst_noise_files", "").split(",")
+        if getattr(args, "burst_noise_files", None)
+        else None,
     )
     print(f"Combined report generated at {output_path}")
 
@@ -1470,6 +1474,17 @@ def get_parser() -> argparse.ArgumentParser:
         type=int,
         default=600,
         help="Timeout in seconds waiting for remote goldens. Defaults to 600.",
+    )
+    parser_report.add_argument(
+        "--bg-noise-file",
+        help="Optional: Path to continuous background noise audio file.",
+    )
+    parser_report.add_argument(
+        "--burst-noise-files",
+        help=(
+            "Optional: Comma-separated list of paths to burst noise audio "
+            "files."
+        ),
     )
     parser_report.set_defaults(func=combined_evals_report_cmd)
 

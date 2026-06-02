@@ -199,13 +199,20 @@ def test_user_simulator(mock_llm_conv_class, mock_sessions_class):
 
     # Assertions
     mock_sessions.run.assert_any_call(
-        session_id="123", event="welcome", variables={}, modality="text"
+        session_id="123",
+        event="welcome",
+        variables={},
+        modality="text",
+        background_noise_file=None,
+        burst_noise_files=None,
     )
     mock_sessions.run.assert_any_call(
         session_id="123",
         text="I want to book a flight",
         variables={},
         modality="text",
+        background_noise_file=None,
+        burst_noise_files=None,
     )
     mock_eval_conv.next_user_utterance.assert_any_call("Where to?")
     mock_eval_conv.next_user_utterance.assert_any_call("Flight booked.")
@@ -267,13 +274,20 @@ def test_user_simulator_audio(mock_llm_conv_class, mock_sessions_class):
     )
 
     mock_sessions.run.assert_any_call(
-        session_id="123", event="welcome", variables={}, modality="audio"
+        session_id="123",
+        event="welcome",
+        variables={},
+        modality="audio",
+        background_noise_file=None,
+        burst_noise_files=None,
     )
     mock_sessions.run.assert_any_call(
         session_id="123",
         text="I want to book a flight",
         variables={},
         modality="audio",
+        background_noise_file=None,
+        burst_noise_files=None,
     )
 
     # Verify text was extracted from Diagnostic Info

@@ -671,3 +671,21 @@ def test_sessions_rate_limiting_multi_turn(mock_client_cls):
 
     # Verify rate limiter was called twice
     assert mock_rate_limiter.wait_and_consume.call_count == 2
+
+
+def test_bidi_session_handler_pydub_missing_raises_error():
+    """Test BidiSessionHandler raises ImportError when pydub is missing."""
+    config = {"session": "projects/p/locations/us/apps/a/sessions/s1"}
+
+    with patch("cxas_scrapi.core.sessions.AudioSegment", None):
+        with pytest.raises(ImportError) as exc_info:
+            BidiSessionHandler(
+                location="us",
+                token="fake_token",
+                config=config,
+                inputs=[],
+                background_noise_file="mock_noise.wav",
+            )
+        assert "pydub is not installed or failed to import" in str(
+            exc_info.value
+        )

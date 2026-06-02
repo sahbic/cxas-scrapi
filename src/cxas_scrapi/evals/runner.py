@@ -44,6 +44,8 @@ def run_all_evals(
     golden_timeout: int = 600,
     include: list[str] = None,
     rate_limiter: RateLimiter | None = None,
+    bg_noise_file: str = None,
+    burst_noise_files: list[str] = None,
 ):
     """Runs all 4 types of evaluations and returns aggregated results.
 
@@ -237,6 +239,8 @@ def run_all_evals(
                         runs=runs,
                         parallel=parallel,
                         modality=modality,
+                        background_noise_file=bg_noise_file,
+                        burst_noise_files=burst_noise_files,
                     )
                     results["simulation"] = sim_results
                     if output_dir:
