@@ -416,6 +416,7 @@ class SimulationEvals(Apps):
         variables: Dict[str, Any],
         modality: str,
         console_logging: bool,
+        use_tool_fakes: bool = False,
     ) -> Any:
         """Sends a request to the CES Agent with exponential backoff for
         transient errors.
@@ -429,6 +430,7 @@ class SimulationEvals(Apps):
                         event=user_utterance.removeprefix("event:").strip(),
                         variables=variables,
                         modality=modality,
+                        use_tool_fakes=use_tool_fakes,
                     )
                 elif user_utterance.startswith("dtmf:"):
                     response = self.sessions_client.run(
@@ -436,6 +438,7 @@ class SimulationEvals(Apps):
                         dtmf=user_utterance.removeprefix("dtmf:").strip(),
                         variables=variables,
                         modality=modality,
+                        use_tool_fakes=use_tool_fakes,
                     )
                 else:
                     response = self.sessions_client.run(
@@ -443,6 +446,7 @@ class SimulationEvals(Apps):
                         text=user_utterance,
                         variables=variables,
                         modality=modality,
+                        use_tool_fakes=use_tool_fakes,
                     )
                 break
             except Exception as e:
@@ -476,6 +480,7 @@ class SimulationEvals(Apps):
         session_id: Optional[str] = None,
         console_logging: bool = True,
         modality: str = "text",
+        use_tool_fakes: bool = False,
     ) -> LLMUserConversation:
         """Runs the simulated conversation loop.
 
@@ -514,6 +519,7 @@ class SimulationEvals(Apps):
                 accumulated_variables,
                 modality,
                 console_logging,
+                use_tool_fakes=use_tool_fakes,
             )
             if not response:
                 break
@@ -574,6 +580,7 @@ class SimulationEvals(Apps):
         modality: str,
         verbose: bool,
         parallel: int,
+        use_tool_fakes: bool = False,
     ) -> Dict[str, Any]:
         """Runs a single simulation job and returns the results."""
         name = tc["name"]
@@ -588,6 +595,7 @@ class SimulationEvals(Apps):
                 session_id=session_id,
                 console_logging=verbose and parallel <= 1,
                 modality=modality,
+                use_tool_fakes=use_tool_fakes,
             )
             duration_s = round(time.time() - _start, 1)
 
@@ -664,6 +672,7 @@ class SimulationEvals(Apps):
         model: str,
         modality: str,
         verbose: bool,
+        use_tool_fakes: bool = False,
     ) -> List[Dict[str, Any]]:
         """Aggregates results from multiple simulation jobs."""
         results = []
@@ -681,6 +690,7 @@ class SimulationEvals(Apps):
                             modality,
                             verbose,
                             parallel,
+                            use_tool_fakes=use_tool_fakes,
                         )
                     )
                     progress.update(task_id, advance=1)
@@ -697,6 +707,7 @@ class SimulationEvals(Apps):
                             modality,
                             verbose,
                             parallel,
+                            use_tool_fakes=use_tool_fakes,
                         ): (tc["name"], run_idx)
                         for tc, run_idx in jobs
                     }
@@ -714,6 +725,7 @@ class SimulationEvals(Apps):
         model: str = _DEFAULT_GEMINI_MODEL,
         modality: str = "text",
         verbose: bool = False,
+        use_tool_fakes: bool = False,
     ) -> List[Dict[str, Any]]:
         """Runs multiple simulations, optionally in parallel.
 
@@ -724,10 +736,17 @@ class SimulationEvals(Apps):
             model: Gemini model to use.
             modality: 'text' or 'audio'.
             verbose: Whether to log to console (only active if parallel=1).
+            use_tool_fakes: Use fake tools for the session if available.
         """
         jobs = self._prepare_simulation_jobs(test_cases, runs)
         return self._aggregate_simulation_results(
-            jobs, runs, parallel, model, modality, verbose
+            jobs,
+            runs,
+            parallel,
+            model,
+            modality,
+            verbose,
+            use_tool_fakes=use_tool_fakes,
         )
 
     def _add_agent_text(self, turn: Turn, text: str) -> None:
