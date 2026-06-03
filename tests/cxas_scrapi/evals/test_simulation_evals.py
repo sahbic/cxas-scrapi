@@ -1092,6 +1092,8 @@ def test_simulation_evals_simulate_conversation_use_tool_fakes(
         event="welcome",
         variables={},
         modality="text",
+        background_noise_file=None,
+        burst_noise_files=None,
         use_tool_fakes=True,
     )
 
@@ -1123,6 +1125,8 @@ def test_simulation_evals_run_simulations_use_tool_fakes(mock_sessions):
         "text",
         False,
         1,
+        None,
+        None,
         use_tool_fakes=True,
     )
 
@@ -1157,6 +1161,8 @@ def test_simulation_evals_run_simulations_use_tool_fakes_parallel(
         "text",
         False,
         2,
+        None,
+        None,
         use_tool_fakes=True,
     )
 
