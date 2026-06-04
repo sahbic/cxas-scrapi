@@ -118,6 +118,8 @@ class EnhancedSimRunner(SimulationEvals):
         console_logging: bool = True,
         modality: str = "text",
         use_tool_fakes: bool = False,
+        background_noise_file: Optional[str] = None,
+        **kwargs: Any,
     ) -> LLMUserConversation:
         """Run a simulated conversation with variable injection."""
         if session_id is None:
