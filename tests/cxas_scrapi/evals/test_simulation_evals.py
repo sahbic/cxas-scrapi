@@ -1038,6 +1038,8 @@ def test_simulation_evals_adds_final_agent_response_on_session_ended(
     mock_eval_conv._add_agent_response.assert_any_call(
         "Transferring to associate now."
     )
+    # Verify that final agent response triggers evaluation
+    mock_eval_conv._next_user_utterance.assert_called_once()
 
 
 @patch("cxas_scrapi.evals.simulation_evals.Sessions")

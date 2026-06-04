@@ -547,6 +547,9 @@ class SimulationEvals(Apps):
             if session_ended:
                 if agent_text:
                     eval_conv._add_agent_response(agent_text)
+                # Ensure the final agent response is evaluated
+                # so that steps_progress is updated on session end.
+                eval_conv._next_user_utterance()
                 if console_logging:
                     print(
                         "\nSession has been closed by the Agent via "
