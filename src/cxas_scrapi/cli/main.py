@@ -886,7 +886,10 @@ def run_session(args: argparse.Namespace) -> None:
                 continue
 
             res = session_client.run(
-                session_id=session_id, text=user_input, modality=args.modality
+                session_id=session_id,
+                text=user_input,
+                modality=args.modality,
+                use_tool_fakes=args.use_tool_fakes,
             )
             session_client.parse_result(res)
     except Exception as e:
@@ -1703,6 +1706,12 @@ def get_parser() -> argparse.ArgumentParser:
     parser_run_session.add_argument(
         "app_name",
         help="The app name (projects/.../locations/.../apps/...).",
+    )
+    parser_run_session.add_argument(
+        "--use-tool-fakes",
+        action="store_true",
+        default=False,
+        help="Use fake tools for the session if available.",
     )
     parser_run_session.set_defaults(func=run_session)
 

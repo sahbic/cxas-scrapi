@@ -977,9 +977,10 @@ class Sessions(Common):
                     f"Invalid modality: {modality}. Must be 'text' or 'audio'."
                 ) from e
 
-        config = {"session": f"{self.app_name}/sessions/{session_id}"}
-        if use_tool_fakes:
-            config["use_tool_fakes"] = True
+        config = {
+            "session": f"{self.app_name}/sessions/{session_id}",
+            "use_tool_fakes": use_tool_fakes,
+        }
         inputs = []
 
         if modality == Modality.AUDIO:

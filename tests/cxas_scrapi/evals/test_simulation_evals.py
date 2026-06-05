@@ -205,6 +205,7 @@ def test_user_simulator(mock_llm_conv_class, mock_sessions_class):
         modality="text",
         background_noise_file=None,
         burst_noise_files=None,
+        use_tool_fakes=False,
     )
     mock_sessions.run.assert_any_call(
         session_id="123",
@@ -213,6 +214,7 @@ def test_user_simulator(mock_llm_conv_class, mock_sessions_class):
         modality="text",
         background_noise_file=None,
         burst_noise_files=None,
+        use_tool_fakes=False,
     )
     mock_eval_conv.next_user_utterance.assert_any_call("Where to?")
     mock_eval_conv.next_user_utterance.assert_any_call("Flight booked.")
@@ -280,6 +282,7 @@ def test_user_simulator_audio(mock_llm_conv_class, mock_sessions_class):
         modality="audio",
         background_noise_file=None,
         burst_noise_files=None,
+        use_tool_fakes=False,
     )
     mock_sessions.run.assert_any_call(
         session_id="123",
@@ -288,6 +291,7 @@ def test_user_simulator_audio(mock_llm_conv_class, mock_sessions_class):
         modality="audio",
         background_noise_file=None,
         burst_noise_files=None,
+        use_tool_fakes=False,
     )
 
     # Verify text was extracted from Diagnostic Info
@@ -1034,6 +1038,8 @@ def test_simulation_evals_adds_final_agent_response_on_session_ended(
     mock_eval_conv._add_agent_response.assert_any_call(
         "Transferring to associate now."
     )
+    # Verify that final agent response triggers evaluation
+    mock_eval_conv._next_user_utterance.assert_called_once()
 
 
 @patch("cxas_scrapi.evals.simulation_evals.Sessions")
@@ -1049,4 +1055,115 @@ def test_simulation_evals_init_with_rate_limiter(mock_sessions):
     mock_sessions.assert_called_once_with(
         app_name,
         rate_limiter=mock_rate_limiter,
+    )
+
+
+@patch("cxas_scrapi.evals.simulation_evals.Sessions")
+@patch("cxas_scrapi.evals.simulation_evals.LLMUserConversation")
+def test_simulation_evals_simulate_conversation_use_tool_fakes(
+    mock_llm_conv_class, mock_sessions_class
+):
+    mock_sessions = mock_sessions_class.return_value
+    mock_eval_conv = mock_llm_conv_class.return_value
+
+    mock_eval_conv.next_user_utterance.side_effect = [
+        ("event: welcome", {}),
+        ("", {}),
+    ]
+    mock_eval_conv.steps_progress = []
+
+    mock_response = MagicMock()
+    mock_response.outputs = []
+    mock_sessions.run.return_value = mock_response
+
+    app_name = "projects/test/locations/us/apps/123-abc"
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+        with patch("cxas_scrapi.core.apps.AgentServiceClient"):
+            simulator = SimulationEvals(app_name=app_name)
+
+    test_case = {"steps": []}
+    simulator.simulate_conversation(
+        test_case=test_case,
+        session_id="123",
+        console_logging=False,
+        use_tool_fakes=True,
+    )
+
+    mock_sessions.run.assert_called_once_with(
+        session_id="123",
+        event="welcome",
+        variables={},
+        modality="text",
+        background_noise_file=None,
+        burst_noise_files=None,
+        use_tool_fakes=True,
+    )
+
+
+@patch("cxas_scrapi.evals.simulation_evals.Sessions")
+def test_simulation_evals_run_simulations_use_tool_fakes(mock_sessions):
+    app_name = "projects/test/locations/us/apps/123-abc"
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+        with patch("cxas_scrapi.core.apps.AgentServiceClient"):
+            evals = SimulationEvals(app_name=app_name)
+
+    evals._run_single_simulation_job = MagicMock(return_value={"status": "ok"})
+    test_cases = [{"name": "tc1"}]
+
+    results = evals.run_simulations(
+        test_cases=test_cases,
+        runs=1,
+        parallel=1,
+        model="gemini-1.5-flash",
+        use_tool_fakes=True,
+    )
+
+    assert len(results) == 1
+    evals._run_single_simulation_job.assert_called_once_with(
+        test_cases[0],
+        0,
+        1,
+        "gemini-1.5-flash",
+        "text",
+        False,
+        1,
+        None,
+        None,
+        use_tool_fakes=True,
+    )
+
+
+@patch("cxas_scrapi.evals.simulation_evals.Sessions")
+def test_simulation_evals_run_simulations_use_tool_fakes_parallel(
+    mock_sessions,
+):
+    app_name = "projects/test/locations/us/apps/123-abc"
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):
+        with patch("cxas_scrapi.core.apps.AgentServiceClient"):
+            evals = SimulationEvals(app_name=app_name)
+
+    evals._run_single_simulation_job = MagicMock(return_value={"status": "ok"})
+    test_cases = [{"name": "tc1"}, {"name": "tc2"}]
+
+    results = evals.run_simulations(
+        test_cases=test_cases,
+        runs=1,
+        parallel=2,
+        model="gemini-1.5-flash",
+        use_tool_fakes=True,
+    )
+
+    assert len(results) == 2
+    assert evals._run_single_simulation_job.call_count == 2
+    evals._run_single_simulation_job.assert_any_call(
+        test_cases[0],
+        0,
+        1,
+        "gemini-1.5-flash",
+        "text",
+        False,
+        2,
+        None,
+        None,
+        use_tool_fakes=True,
     )
