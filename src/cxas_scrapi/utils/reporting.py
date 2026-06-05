@@ -234,10 +234,9 @@ def _parse_trace(trace, tools_map):
             if not stripped_line:
                 continue
             formatted_line = _format_trace_line(stripped_line, tools_map)
-            if (
-                formatted_line.startswith("Agent Text (Diag):")
-                or formatted_line.startswith("User Query:")
-            ):
+            if formatted_line.startswith(
+                "Agent Text (Diag):"
+            ) or formatted_line.startswith("User Query:"):
                 continue
             elif formatted_line.startswith("Agent Text:"):
                 parsed_lines.append(
