@@ -655,7 +655,11 @@ class SimulationEvals(Apps):
                 "session_id": session_id,
                 "session_parameters": tc.get("session_parameters", {}),
                 "transcript": conv.get_transcript(),
-                "detailed_trace": getattr(conv, "detailed_trace", []),
+                "detailed_trace": getattr(
+                    conv,
+                    "_detailed_trace",
+                    getattr(conv, "detailed_trace", []),
+                ),
                 "step_details": [
                     {
                         "goal": p.step.goal,

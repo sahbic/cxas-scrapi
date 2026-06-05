@@ -234,7 +234,9 @@ def _parse_trace(trace, tools_map):
             if not stripped_line:
                 continue
             formatted_line = _format_trace_line(stripped_line, tools_map)
-            if formatted_line.startswith("Agent Text (Diag):"):
+            if formatted_line.startswith(
+                "Agent Text (Diag):"
+            ) or formatted_line.startswith("User Query:"):
                 continue
             elif formatted_line.startswith("Agent Text:"):
                 parsed_lines.append(
@@ -798,7 +800,11 @@ def generate_combined_html_report(
                 for entry in trace:
                     for raw_line in entry.split("\n"):
                         line = raw_line.strip()
-                        if not line or line.startswith("Agent Text (Diag):"):
+                        if (
+                            not line
+                            or line.startswith("Agent Text (Diag):")
+                            or line.startswith("User Query:")
+                        ):
                             continue
                         for path, dname in tools_map.items():
                             line = line.replace(path, dname)
