@@ -1310,7 +1310,7 @@ def _load_sim_test_cases(yaml_path: str) -> list[dict[str, Any]]:
     return merged_cases
 
 
-def load_sim_results(json_path: str, sim_evals_yaml: str = None):
+def load_sim_results(json_path: str, sim_evals_yaml: str | None = None):
     """Load sim results from JSON file.
 
     Handles both old (list) and new (envelope) formats.

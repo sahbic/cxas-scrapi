@@ -143,7 +143,7 @@ def _commit_message_lines(msg_file: str) -> list[tuple[int, str]]:
     """Read the commit-message file, skip ``#``-prefixed template lines,
     return ``(line_no, content)``."""
     try:
-        with open(msg_file, "r", encoding="utf-8") as f:
+        with open(msg_file, encoding="utf-8") as f:
             raw_lines = f.readlines()
     except OSError as exc:
         print(f"Could not read commit message: {exc}", file=sys.stderr)
