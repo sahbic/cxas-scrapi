@@ -58,7 +58,7 @@ def _convert_to_snake_case(name: str) -> str:
 def load_component(relative_path: str) -> str:
     """Loads raw component text from the resources directory with caching."""
     full_path = COMPONENTS_DIR / relative_path
-    with open(full_path, "r", encoding="utf-8") as f:
+    with open(full_path, encoding="utf-8") as f:
         return f.read()
 
 

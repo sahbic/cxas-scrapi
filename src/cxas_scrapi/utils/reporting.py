@@ -89,9 +89,9 @@ def _get_html_head(ts):
     js_path = os.path.join(
         os.path.dirname(__file__), "../resources/components/base/interaction.js"
     )
-    with open(css_path, "r", encoding="utf-8") as f:
+    with open(css_path, encoding="utf-8") as f:
         css = f.read()
-    with open(js_path, "r", encoding="utf-8") as f:
+    with open(js_path, encoding="utf-8") as f:
         js = f.read()
     return f"""<!DOCTYPE html>
 <html><head>
@@ -368,7 +368,7 @@ def _get_run_detail(r, ces_base, tools_map):
     html = ""
     run_cls = "pass" if r.get("passed") else "fail"
     session_id = r.get("session_id", "")
-    html += f'<details class="run-detail"{"" if not r.get("passed") else ""}>\n'
+    html += '<details class="run-detail">\n'
     html += (
         f"<summary>Run {r['run']} — "
         f'<span class="{run_cls}">'
@@ -422,8 +422,8 @@ def generate_html_report(
     modality: str,
     model: str,
     app_name: str = "",
-    wall_clock_s: float = None,
-    user_agent_extension: str = None,
+    wall_clock_s: float | None = None,
+    user_agent_extension: str | None = None,
 ) -> None:
     """Generate an HTML report and save it locally or upload to GCS.
 
@@ -906,7 +906,7 @@ def generate_combined_html_report(
     template_path = os.path.join(
         os.path.dirname(__file__), "combined_report_template.html"
     )
-    with open(template_path, "r") as f:
+    with open(template_path) as f:
         template_content = f.read()
     template = jinja2.Template(template_content)
     html = template.render(
