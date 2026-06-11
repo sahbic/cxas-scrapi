@@ -130,6 +130,14 @@ def heal_tool_refs(ir: MigrationIR) -> tuple[dict[str, str], list[str]]:
                 base = ref[: -len(suffix)]
                 if base in known and ref not in known:
                     return base
+
+        # Prefix match check for truncated completion cutoffs (length >= 15
+        # to avoid generic collisions)
+        if len(ref) >= 15:
+            prefix_matches = [k for k in known if k.startswith(ref)]
+            if len(prefix_matches) == 1:
+                return prefix_matches[0]
+
         return None
 
     # Bogus placeholders Gemini sometimes emits when it gives up mid-list.
@@ -830,7 +838,7 @@ class StructuralConsolidator:
                     per_group_timeout_s,
                 )
                 return "timeout"
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning("Step 2A failed for %s: %s", group_name, exc)
                 return "error"
 
@@ -860,7 +868,7 @@ class StructuralConsolidator:
                     per_group_timeout_s,
                 )
                 return "timeout"
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning("Step 2B failed for %s: %s", group_name, exc)
                 return "error"
 

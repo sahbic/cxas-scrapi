@@ -15,6 +15,7 @@
 """CLI script for running CXAS SCRAPI evaluations."""
 
 import argparse
+import datetime
 import json
 import logging
 import os
@@ -22,7 +23,6 @@ import subprocess
 import sys
 import time
 import uuid
-from typing import Dict, List
 
 import pandas as pd
 from google.api_core.exceptions import NotFound
@@ -42,13 +42,22 @@ from cxas_scrapi.cli.app import (
 )
 from cxas_scrapi.cli.create_local import handle_local_create
 from cxas_scrapi.cli.insights_cli import populate_insights_parser
+from cxas_scrapi.cli.llm_lint import llm_lint
 from cxas_scrapi.cli.migration_cli import (
-    MigrationCLI,
+    run_end_to_end,
+    run_resume,
+    run_stage_1,
+    run_stage_2,
+    run_stage_3,
 )
-from cxas_scrapi.cli.migration_cli import (
-    register as register_dfcx_cxas_subparsers,
+from cxas_scrapi.cli.resources_cli import (
+    register as register_resources_subparsers,
 )
 from cxas_scrapi.cli.trace_cli import register as register_trace_subparser
+from cxas_scrapi.cli.versions_cli import (
+    app_versions_compare,
+    app_versions_list,
+)
 from cxas_scrapi.core.apps import Apps
 from cxas_scrapi.core.common import Common
 from cxas_scrapi.core.conversation_history import ConversationHistory
@@ -57,6 +66,7 @@ from cxas_scrapi.core.evaluations import Evaluations, ExportFormat
 from cxas_scrapi.core.github import init_github_action
 from cxas_scrapi.evals.callback_evals import CallbackEvals
 from cxas_scrapi.evals.tool_evals import ToolEvals
+from cxas_scrapi.migration.config import DEFAULT_MODEL
 from cxas_scrapi.migration.dfcx_exporter import ConversationalAgentsAPI
 from cxas_scrapi.utils.eval_utils import EvalUtils
 
@@ -92,10 +102,70 @@ def export_eval(args: argparse.Namespace) -> None:
 
 
 def run_migration_dashboard(args: argparse.Namespace) -> None:
-    """Handles the 'dfcx-cxas migrate' command."""
-    dashboard = MigrationCLI()
-    cx_api = ConversationalAgentsAPI()
-    dashboard.run(default_agent_name=args.default_agent_name, cx_api=cx_api)
+    """Handles the unified 'cxas migrate dfcx' command, routing to
+    non-interactive run / optimize stages or the interactive TUI dashboard.
+    """
+    if getattr(args, "run", False):
+        # Validate E2E requirements
+        if not (
+            getattr(args, "source_agent_id", None)
+            or getattr(args, "source_zip", None)
+        ):
+            print(
+                "Error: You must provide either --source-agent-id or "
+                "--source-zip for non-interactive --run."
+            )
+            sys.exit(1)
+        if not getattr(args, "project_id", None):
+            print(
+                "Error: Target --project-id is required for "
+                "non-interactive --run."
+            )
+            sys.exit(1)
+        if not getattr(args, "target_name", None):
+            print(
+                "Error: Target --target-name is required for "
+                "non-interactive --run."
+            )
+            sys.exit(1)
+
+        run_end_to_end(args)
+
+    elif getattr(args, "optimize", False):
+        # Validate stage requirements
+        if not getattr(args, "stage", None):
+            print(
+                "Error: You must specify a target --stage (1, 2, 3, "
+                "or resume) when using --optimize."
+            )
+            sys.exit(1)
+
+        # Set default flags
+        args.yes = True  # optimize stage is non-interactive by default
+
+        if args.stage == "1":
+            if not getattr(args, "version_label", None):
+                args.version_label = "0.0.3"
+            run_stage_1(args)
+        elif args.stage == "2":
+            if not getattr(args, "version_label", None):
+                args.version_label = "0.0.4"
+            run_stage_2(args)
+        elif args.stage == "3":
+            if not getattr(args, "version_label", None):
+                args.version_label = "0.0.5"
+            run_stage_3(args)
+        elif args.stage == "resume":
+            args.yes = False  # resume is interactive picker
+            run_resume(args)
+
+    else:
+        # Default: Interactive TUI Dashboard Mode
+        from cxas_scrapi.cli.migration_cli import MigrationCLI  # noqa: PLC0415
+
+        dashboard = MigrationCLI()
+        cx_api = ConversationalAgentsAPI()
+        dashboard.run(default_agent_name=args.default_agent_name, cx_api=cx_api)
 
 
 def push_eval(args: argparse.Namespace) -> None:
@@ -127,11 +197,11 @@ def push_eval(args: argparse.Namespace) -> None:
 
 def wait_for_evaluation_completion(
     eval_utils: EvalUtils,
-    old_result_ids: List[str],
+    old_result_ids: list[str],
     app_name: str,
     expected_count: int = 1,
     timeout_seconds: int = 600,
-) -> Dict[str, pd.DataFrame]:
+) -> dict[str, pd.DataFrame]:
     """Waits for all new evaluation results to appear."""
     print(f"Waiting for {expected_count} evaluation(s) to complete...")
     start_time = time.time()
@@ -184,8 +254,8 @@ def wait_for_evaluation_completion(
     sys.exit(1)
 
 
-def filter_metrics_and_assess(  # noqa: C901
-    df_dict_new_run: Dict[str, pd.DataFrame],
+def filter_metrics_and_assess(
+    df_dict_new_run: dict[str, pd.DataFrame],
     filter_auto_metrics: bool,
 ) -> bool:
     """Assesses the evaluation run and returns True if passed,
@@ -278,7 +348,7 @@ def filter_metrics_and_assess(  # noqa: C901
     return passed
 
 
-def run_eval(args: argparse.Namespace) -> None:  # noqa: C901
+def run_eval(args: argparse.Namespace) -> None:
     """Handles the 'run' command."""
 
     print(f"Triggering evaluation for App: {args.app_name}")
@@ -513,6 +583,10 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
         filter_tags=filter_tags_list,
         parallel=sim_parallel,
         golden_timeout=golden_timeout,
+        bg_noise_file=getattr(args, "bg_noise_file", None),
+        burst_noise_files=getattr(args, "burst_noise_files", "").split(",")
+        if getattr(args, "burst_noise_files", None)
+        else None,
     )
     print(f"Combined report generated at {output_path}")
 
@@ -812,7 +886,10 @@ def run_session(args: argparse.Namespace) -> None:
                 continue
 
             res = session_client.run(
-                session_id=session_id, text=user_input, modality=args.modality
+                session_id=session_id,
+                text=user_input,
+                modality=args.modality,
+                use_tool_fakes=args.use_tool_fakes,
             )
             session_client.parse_result(res)
     except Exception as e:
@@ -1024,18 +1101,187 @@ def get_parser() -> argparse.ArgumentParser:
     )
 
     parser_migrate_dfcx = migrate_subparsers.add_parser(
-        "dfcx", help="Launch the interactive migration dashboard for DFCX."
+        "dfcx",
+        help=(
+            "Launch the interactive DFCX migration TUI dashboard, or run "
+            "non-interactive --run/--optimize flows."
+        ),
+        formatter_class=argparse.RawTextHelpFormatter,
     )
+
+    # Mode selection group
+    mode_group = parser_migrate_dfcx.add_mutually_exclusive_group(
+        required=False
+    )
+    mode_group.add_argument(
+        "--run",
+        action="store_true",
+        help="Run end-to-end scriptable DFCX→CXAS migration non-interactively.",
+    )
+    mode_group.add_argument(
+        "--optimize",
+        action="store_true",
+        help=(
+            "Run checkpoint-level optimization stages or resume menu "
+            "non-interactively."
+        ),
+    )
+
+    # General / TUI arguments
+    default_name_ts = datetime.datetime.now().strftime("ma-%m%d-%H%M")
     parser_migrate_dfcx.add_argument(
         "--default-agent-name",
-        default="migrated-agent",
-        help="Default name for the target agent.",
+        default=default_name_ts,
+        help=(
+            "Default name for the target agent "
+            f"(TUI Mode / Fallback, default: '{default_name_ts}')."
+        ),
     )
-    parser_migrate_dfcx.set_defaults(func=run_migration_dashboard)
 
-    # Register the dfcx-cxas subcommand tree (run / stage1 / stage2 /
-    # stage3 / resume). Lives in its own module to keep main.py lean.
-    register_dfcx_cxas_subparsers(migrate_subparsers)
+    # E2E Migration Arguments (active when --run is specified)
+    e2e_group = parser_migrate_dfcx.add_argument_group(
+        "End-to-End Migration Options (--run)"
+    )
+    src_group = e2e_group.add_mutually_exclusive_group(required=False)
+    src_group.add_argument(
+        "--source-agent-id",
+        help=(
+            "The source DFCX Agent ID (projects/.../locations/.../agents/...)."
+        ),
+    )
+    src_group.add_argument(
+        "--source-zip",
+        help="Path to a local DFCX agent export (.zip) file.",
+    )
+    e2e_group.add_argument(
+        "--project-id",
+        help=(
+            "Target GCP Project ID for CXAS deployment "
+            "(Required for non-interactive modes)."
+        ),
+    )
+    e2e_group.add_argument(
+        "--location",
+        default="us",
+        help="Target GCP Location for CXAS deployment (Default: 'us').",
+    )
+    e2e_group.add_argument(
+        "--target-name",
+        help="The display name prefix / bundle target for the migrated app.",
+    )
+    e2e_group.add_argument(
+        "--env",
+        choices=["PROD", "AUTOPUSH"],
+        default="PROD",
+        help="CXAS Environment to target (PROD or AUTOPUSH).",
+    )
+    e2e_group.add_argument(
+        "--model",
+        default=DEFAULT_MODEL,
+        help=(
+            "The Gemini model to use for translation & optimization "
+            f"(Default: {DEFAULT_MODEL})."
+        ),
+    )
+    e2e_group.add_argument(
+        "--profile",
+        choices=["standard", "direct", "custom"],
+        default="standard",
+        help=(
+            "The E2E migration profile configuration:\n"
+            "  * standard: standard best practices (dedup + N->M TUI "
+            "consolidation + Stage 3 wiring)\n"
+            "  * direct: baseline fast 1:1 transpile (no "
+            "optimizations/consolidation)\n"
+            "  * custom: allows overriding via individual switches below"
+        ),
+    )
+    e2e_group.add_argument(
+        "--no-optimize",
+        action="store_true",
+        help=(
+            "Custom Mode: Skip Stage 1 + Stage 2 + Stage 3 optimization passes."
+        ),
+    )
+    e2e_group.add_argument(
+        "--persist-bundle",
+        action="store_true",
+        help=(
+            "Custom Mode: Persist intermediate IR bundle JSON for "
+            "stage-resumability."
+        ),
+    )
+    e2e_group.add_argument(
+        "--yes",
+        "-y",
+        action="store_true",
+        help="Non-interactive mode: auto-confirm stages and operations.",
+    )
+
+    # Optimization/Checkpoint Arguments (active when --optimize is specified)
+    opt_group = parser_migrate_dfcx.add_argument_group(
+        "Optimization / Checkpoint Stage Options (--optimize)"
+    )
+    opt_group.add_argument(
+        "--stage",
+        choices=["1", "2", "3", "resume"],
+        help=(
+            "The specific optimization stage or resume menu to invoke "
+            "(Required for --optimize)."
+        ),
+    )
+    opt_group.add_argument(
+        "--ir-bundle",
+        help="Path to an existing <target>_ir.json bundle file.",
+    )
+    opt_group.add_argument(
+        "--version-label",
+        help=(
+            "CXAS Version display_name to create after the stage "
+            "(Default: '0.0.3' for stage 1, '0.0.4' for stage 2, "
+            "'0.0.5' for stage 3)."
+        ),
+    )
+    opt_group.add_argument(
+        "--no-persist",
+        action="store_true",
+        help="Skip writing the updated bundle state back to disk.",
+    )
+    opt_group.add_argument(
+        "--no-unit-tests",
+        action="store_true",
+        help=(
+            "Stage 2: Skip deterministic unit-test goldens/scenarios "
+            "generation."
+        ),
+    )
+    opt_group.add_argument(
+        "--no-lint",
+        action="store_true",
+        help=(
+            "Stage 2: Skip running local post-deploy schema and practice "
+            "linters."
+        ),
+    )
+    opt_group.add_argument(
+        "--no-report",
+        action="store_true",
+        help=(
+            "Stage 2: Skip generating the detailed optimization markdown "
+            "audit log."
+        ),
+    )
+    opt_group.add_argument(
+        "--architecture",
+        choices=["hub-and-spoke", "original-hierarchy"],
+        default="hub-and-spoke",
+        help=(
+            "Stage 3: Spoke-Hub architecture style mapping to compile "
+            "child routing (Default: 'hub-and-spoke')."
+        ),
+    )
+
+    parser_migrate_dfcx.set_defaults(func=run_migration_dashboard)
 
     # Parser for 'init-github-action'
     parser_init_gh = subparsers.add_parser(
@@ -1230,6 +1476,17 @@ def get_parser() -> argparse.ArgumentParser:
         type=int,
         default=600,
         help="Timeout in seconds waiting for remote goldens. Defaults to 600.",
+    )
+    parser_report.add_argument(
+        "--bg-noise-file",
+        help="Optional: Path to continuous background noise audio file.",
+    )
+    parser_report.add_argument(
+        "--burst-noise-files",
+        help=(
+            "Optional: Comma-separated list of paths to burst noise audio "
+            "files."
+        ),
     )
     parser_report.set_defaults(func=combined_evals_report_cmd)
 
@@ -1450,6 +1707,12 @@ def get_parser() -> argparse.ArgumentParser:
         "app_name",
         help="The app name (projects/.../locations/.../apps/...).",
     )
+    parser_run_session.add_argument(
+        "--use-tool-fakes",
+        action="store_true",
+        default=False,
+        help="Use fake tools for the session if available.",
+    )
     parser_run_session.set_defaults(func=run_session)
 
     # Parser for 'ci-test'
@@ -1533,6 +1796,15 @@ def get_parser() -> argparse.ArgumentParser:
     parser_pull.add_argument(
         "--target-dir", default=".", help="Directory to extract to."
     )
+    parser_pull.add_argument(
+        "--overwrite",
+        action="store_true",
+        help=(
+            "Overwrite existing target directory data with exported data. "
+            "Existing resources that do not have a matching display name in "
+            "the exported app will be deleted."
+        ),
+    )
     _add_project_location_args(parser_pull, required=False)
     parser_pull.set_defaults(func=app_pull)
 
@@ -1570,6 +1842,15 @@ def get_parser() -> argparse.ArgumentParser:
     parser_push.add_argument(
         "--version-description",
         help="Description for the created version.",
+    )
+    parser_push.add_argument(
+        "--overwrite",
+        action="store_true",
+        help=(
+            "Overwrite existing data with imported data. Existing resources "
+            "that do not have a matching display name in the imported app "
+            "will be deleted"
+        ),
     )
     parser_push.set_defaults(func=app_push)
 
@@ -1659,6 +1940,36 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser_lint.set_defaults(func=app_lint)
 
+    # Parser for 'llm-lint'
+    parser_llm_lint = subparsers.add_parser(
+        "llm-lint",
+        help="Run AI-driven semantic linter on GECX sub-agent instructions.",
+    )
+    parser_llm_lint.add_argument(
+        "--agent-dir",
+        required=True,
+        help="Path to the sub-agent directory containing instruction.txt.",
+    )
+    parser_llm_lint.add_argument(
+        "--project-id",
+        help="GCP Project ID (auto-detected if omitted).",
+    )
+    parser_llm_lint.add_argument(
+        "--location",
+        default="us-central1",
+        help="GCP location for Vertex AI queries (default: us-central1).",
+    )
+    parser_llm_lint.add_argument(
+        "--model",
+        default="gemini-2.5-flash",
+        help="Gemini model name to use (default: gemini-2.5-flash).",
+    )
+    parser_llm_lint.add_argument(
+        "--output",
+        help="Optional path to write the markdown lint report.",
+    )
+    parser_llm_lint.set_defaults(func=llm_lint)
+
     # Parser for 'init'
     parser_init = subparsers.add_parser(
         "init",
@@ -1684,7 +1995,7 @@ def get_parser() -> argparse.ArgumentParser:
         "--description", help="Description for the new app."
     )
     parser_create.add_argument(
-        "--app-name", help="Optional specific app_name to use."
+        "--app-id", help="Optional specific app_id to use."
     )
     _add_project_location_args(parser_create)
     parser_create.set_defaults(func=app_create)
@@ -1853,6 +2164,71 @@ def get_parser() -> argparse.ArgumentParser:
         "--app-dir", default=".", help="App directory."
     )
     parser_local_create_tool.set_defaults(func=handle_local_create)
+
+    # Subparsers for 'versions'
+    parser_versions = subparsers.add_parser(
+        "versions", help="Manage CXAS app versions (list, compare)."
+    )
+    versions_subparsers = parser_versions.add_subparsers(
+        title="Versions Commands", dest="versions_command", required=True
+    )
+
+    parser_versions_list = versions_subparsers.add_parser(
+        "list", help="List all deployed versions of an app."
+    )
+    parser_versions_list.add_argument(
+        "--app-name",
+        required=True,
+        help="The CXAS App ID (projects/.../locations/.../apps/...).",
+    )
+    _add_project_location_args(parser_versions_list, required=False)
+    parser_versions_list.set_defaults(func=app_versions_list)
+
+    parser_versions_compare = versions_subparsers.add_parser(
+        "compare",
+        help="Compare two app versions and generate a human-readable diff.",
+    )
+    parser_versions_compare.add_argument(
+        "--app-name",
+        required=True,
+        help="The CXAS App ID (projects/.../locations/.../apps/...).",
+    )
+    parser_versions_compare.add_argument(
+        "--source",
+        required=True,
+        help="Source version ID (e.g., UUID).",
+    )
+    parser_versions_compare.add_argument(
+        "--target",
+        required=True,
+        help="Target version ID (e.g., UUID).",
+    )
+    parser_versions_compare.add_argument(
+        "--output",
+        help="Optional path to save the Markdown/HTML comparison report.",
+    )
+    parser_versions_compare.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help=(
+            "Print detailed line-by-line diff directly to the console using "
+            "rich formatting."
+        ),
+    )
+    parser_versions_compare.add_argument(
+        "--web",
+        action="store_true",
+        help=(
+            "Force generate a self-contained interactive HTML diff report "
+            "instead of console text."
+        ),
+    )
+    _add_project_location_args(parser_versions_compare, required=False)
+    parser_versions_compare.set_defaults(func=app_versions_compare)
+
+    # Subparsers for 'tools', 'callbacks', and 'variables'
+    register_resources_subparsers(subparsers)
 
     # Subparsers for 'insights'
     parser_insights = subparsers.add_parser(

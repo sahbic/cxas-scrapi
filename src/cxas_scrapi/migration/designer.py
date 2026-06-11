@@ -17,7 +17,7 @@
 import json
 import logging
 import textwrap
-from typing import Any, Dict
+from typing import Any
 
 from cxas_scrapi.migration.data_models import IRTool, MigrationIR
 from cxas_scrapi.migration.prompts import Prompts
@@ -44,7 +44,7 @@ class AsyncAgentDesigner:
 
     @staticmethod
     def _get_available_toolsets_context(
-        ir_tools_dict: Dict[str, IRTool],
+        ir_tools_dict: dict[str, IRTool],
     ) -> str:
         """Formats the loaded OpenAPI toolsets into a clean string for the LLM
         context."""
@@ -95,7 +95,7 @@ class AsyncAgentDesigner:
 
     @staticmethod
     def _get_available_tools_context(
-        ir_tools_dict: Dict[str, IRTool],
+        ir_tools_dict: dict[str, IRTool],
     ) -> str:
         """Render the FULL tool registry (TOOLSET + PYTHON + TOOL) as a
         flat list of exact tool IDs the LLM may reference in
@@ -110,7 +110,7 @@ class AsyncAgentDesigner:
         Also includes the ``end_session`` sentinel that's always
         auto-registered at deploy time.
         """
-        by_type: Dict[str, list[str]] = {
+        by_type: dict[str, list[str]] = {
             "TOOLSET": [],
             "PYTHON": [],
             "TOOL": [],
@@ -140,7 +140,7 @@ class AsyncAgentDesigner:
         target_ir: MigrationIR,
         available_groups: str | None = None,
         self_group: str | None = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Runs the Principal Architect prompt to generate the JSON
         Blueprint.
 
@@ -171,22 +171,33 @@ class AsyncAgentDesigner:
             AsyncAgentDesigner._get_available_tools_context(target_ir.tools)
         )
 
-        prompt_2a = Prompts.STEP_2A_ARCHITECTURE_EXPERT["template"].format(
-            flow_name=flow_name,
-            resource_visualization=tree_view,
-            global_variables=global_vars_context,
-            available_backend_toolsets=toolset_context,
-            available_tools=available_tools_context,
-            available_groups=(
-                available_groups
-                or "(consolidation context not applicable for this run)"
-            ),
-            self_group=self_group or flow_name,
-        )
+        if available_groups is not None:
+            system_prompt = Prompts.STEP_3A_CONSOLIDATION_ARCHITECTURE["system"]
+            template_prompt = Prompts.STEP_3A_CONSOLIDATION_ARCHITECTURE[
+                "template"
+            ]
+            prompt_2a = template_prompt.format(
+                flow_name=flow_name,
+                resource_visualization=tree_view,
+                global_variables=global_vars_context,
+                available_backend_toolsets=toolset_context,
+                available_tools=available_tools_context,
+                available_groups=available_groups,
+                self_group=self_group or flow_name,
+            )
+        else:
+            system_prompt = Prompts.STEP_2A_ARCHITECTURE_EXPERT["system"]
+            template_prompt = Prompts.STEP_2A_ARCHITECTURE_EXPERT["template"]
+            prompt_2a = template_prompt.format(
+                flow_name=flow_name,
+                resource_visualization=tree_view,
+                global_variables=global_vars_context,
+                available_backend_toolsets=toolset_context,
+            )
 
         response_raw = await self.gemini.generate_async(
             prompt=prompt_2a,
-            system_prompt=Prompts.STEP_2A_ARCHITECTURE_EXPERT["system"],
+            system_prompt=system_prompt,
         )
 
         blueprint = {}
@@ -218,7 +229,7 @@ class AsyncAgentDesigner:
     async def run_step_2b_instructions(
         self,
         flow_name: str,
-        blueprint: Dict[str, Any],
+        blueprint: dict[str, Any],
         tree_view: str,
         target_ir: MigrationIR | None = None,
         available_groups: str | None = None,
@@ -254,21 +265,31 @@ class AsyncAgentDesigner:
                 "Blueprint only)"
             )
 
-        prompt_2b = Prompts.STEP_2B_INSTRUCTIONS_EXPERT["template"].format(
-            agent_name=flow_name,
-            architecture_blueprint=blueprint_json_str,
-            resource_visualization=tree_view,
-            available_tools=available_tools_context,
-            available_groups=(
-                available_groups
-                or "(consolidation context not applicable for this run)"
-            ),
-            self_group=self_group or flow_name,
-        )
+        if available_groups is not None:
+            system_prompt = Prompts.STEP_3B_CONSOLIDATION_INSTRUCTIONS["system"]
+            template_prompt = Prompts.STEP_3B_CONSOLIDATION_INSTRUCTIONS[
+                "template"
+            ]
+            prompt_2b = template_prompt.format(
+                agent_name=flow_name,
+                architecture_blueprint=blueprint_json_str,
+                resource_visualization=tree_view,
+                available_tools=available_tools_context,
+                available_groups=available_groups,
+                self_group=self_group or flow_name,
+            )
+        else:
+            system_prompt = Prompts.STEP_2B_INSTRUCTIONS_EXPERT["system"]
+            template_prompt = Prompts.STEP_2B_INSTRUCTIONS_EXPERT["template"]
+            prompt_2b = template_prompt.format(
+                agent_name=flow_name,
+                architecture_blueprint=blueprint_json_str,
+                resource_visualization=tree_view,
+            )
 
         response_raw = await self.gemini.generate_async(
             prompt=prompt_2b,
-            system_prompt=Prompts.STEP_2B_INSTRUCTIONS_EXPERT["system"],
+            system_prompt=system_prompt,
         )
 
         xml_instructions = ""
@@ -290,10 +311,10 @@ class AsyncAgentDesigner:
     async def run_step_2c_tools_and_callbacks(
         self,
         flow_name: str,
-        blueprint: Dict[str, Any],
+        blueprint: dict[str, Any],
         tree_view: str,
         target_ir: MigrationIR,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Runs the Tools & Callbacks Expert prompt to generate Python Code."""
         AsyncAgentDesigner._validate_tree_view(tree_view)
         logger.info(
