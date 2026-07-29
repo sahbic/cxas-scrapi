@@ -408,6 +408,16 @@ class SimulationEvals(Apps):
         vertex_location: str | None = None,
         **kwargs: typing.Any,
     ) -> None:
+        """Initializes the SimulationEvals class.
+
+        Args:
+            app_name: CXAS App Name
+            rate_limiter: Optional RateLimiter for API calls
+            expectations_only: If True, only evaluate expectations without running the agent.
+            deployment_id: Optional Deployment ID.
+            vertex_location: Optional Vertex AI location (defaults to VERTEX_LOCATION env var or 'global')
+            kwargs: Additional passed kwargs.
+        """
         self.app_name = app_name
         self.expectations_only = expectations_only
         project_id = app_name.split("/")[1]
